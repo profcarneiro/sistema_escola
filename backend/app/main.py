@@ -5,7 +5,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.database import engine, Base, SessionLocal
 from app.initial_data import init_db
-from app.routers import auth_router, users_router, lgpd_router
+from app.routers import (
+    auth_router,
+    users_router,
+    lgpd_router,
+    rooms_router,
+    courses_router,
+    teachers_router,
+    class_groups_router,
+)
+
 
 
 @asynccontextmanager
@@ -50,6 +59,11 @@ app.add_middleware(
 app.include_router(auth_router, prefix=settings.API_V1_STR)
 app.include_router(users_router, prefix=settings.API_V1_STR)
 app.include_router(lgpd_router, prefix=settings.API_V1_STR)
+app.include_router(rooms_router, prefix=settings.API_V1_STR)
+app.include_router(courses_router, prefix=settings.API_V1_STR)
+app.include_router(teachers_router, prefix=settings.API_V1_STR)
+app.include_router(class_groups_router, prefix=settings.API_V1_STR)
+
 
 
 @app.get("/", tags=["Status"])
