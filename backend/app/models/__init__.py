@@ -18,6 +18,13 @@ from app.models.attendance import (
     StatusReposicao,
     ConceitoAvaliacao,
 )
+from app.models.financial import (
+    Invoice,
+    Payment,
+    Expense,
+    FormaPagamento,
+    StatusTitulo,
+)
 
 __all__ = [
     "User",
@@ -44,6 +51,12 @@ __all__ = [
     "StatusPresenca",
     "StatusReposicao",
     "ConceitoAvaliacao",
+    "Invoice",
+    "Payment",
+    "Expense",
+    "FormaPagamento",
+    "StatusTitulo",
 ]
+
 
 
