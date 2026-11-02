@@ -17,7 +17,11 @@ from app.routers import (
     enrollments_router,
     attendance_router,
     financial_router,
+    communication_router,
+    reports_router,
+    backup_router,
 )
+
 
 
 
@@ -74,6 +78,10 @@ app.include_router(students_router, prefix=settings.API_V1_STR)
 app.include_router(enrollments_router, prefix=settings.API_V1_STR)
 app.include_router(attendance_router, prefix=settings.API_V1_STR)
 app.include_router(financial_router, prefix=settings.API_V1_STR)
+app.include_router(communication_router, prefix=settings.API_V1_STR)
+app.include_router(reports_router, prefix=settings.API_V1_STR)
+app.include_router(backup_router, prefix=settings.API_V1_STR)
+
 
 
 
