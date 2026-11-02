@@ -9,6 +9,15 @@ from app.models.student import Aluno
 from app.models.guardian import Responsavel
 from app.models.enrollment import Matricula, StatusMatricula
 from app.models.waitlist import ListaEspera
+from app.models.attendance import (
+    Lesson,
+    Attendance,
+    ClassMakeUp,
+    Evaluation,
+    StatusPresenca,
+    StatusReposicao,
+    ConceitoAvaliacao,
+)
 
 __all__ = [
     "User",
@@ -28,5 +37,13 @@ __all__ = [
     "Matricula",
     "StatusMatricula",
     "ListaEspera",
+    "Lesson",
+    "Attendance",
+    "ClassMakeUp",
+    "Evaluation",
+    "StatusPresenca",
+    "StatusReposicao",
+    "ConceitoAvaliacao",
 ]
+
 

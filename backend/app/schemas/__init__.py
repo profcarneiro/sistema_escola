@@ -44,6 +44,19 @@ from app.schemas.enrollment import (
     ListaEsperaCreate,
     ListaEsperaResponse,
 )
+from app.schemas.attendance import (
+    LessonBase,
+    LessonCreate,
+    LessonResponse,
+    AttendanceItem,
+    AttendanceBatchCreate,
+    AttendanceResponse,
+    ClassMakeUpCreate,
+    ClassMakeUpResponse,
+    EvaluationBase,
+    EvaluationCreate,
+    EvaluationResponse,
+)
 
 __all__ = [
     "UserBase",
@@ -89,6 +102,18 @@ __all__ = [
     "MatriculaResponse",
     "ListaEsperaCreate",
     "ListaEsperaResponse",
+    "LessonBase",
+    "LessonCreate",
+    "LessonResponse",
+    "AttendanceItem",
+    "AttendanceBatchCreate",
+    "AttendanceResponse",
+    "ClassMakeUpCreate",
+    "ClassMakeUpResponse",
+    "EvaluationBase",
+    "EvaluationCreate",
+    "EvaluationResponse",
 ]
+
 
 
