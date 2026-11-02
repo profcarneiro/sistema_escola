@@ -13,7 +13,10 @@ from app.routers import (
     courses_router,
     teachers_router,
     class_groups_router,
+    students_router,
+    enrollments_router,
 )
+
 
 
 
@@ -63,6 +66,9 @@ app.include_router(rooms_router, prefix=settings.API_V1_STR)
 app.include_router(courses_router, prefix=settings.API_V1_STR)
 app.include_router(teachers_router, prefix=settings.API_V1_STR)
 app.include_router(class_groups_router, prefix=settings.API_V1_STR)
+app.include_router(students_router, prefix=settings.API_V1_STR)
+app.include_router(enrollments_router, prefix=settings.API_V1_STR)
+
 
 
 

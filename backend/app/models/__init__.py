@@ -5,6 +5,10 @@ from app.models.room import Room
 from app.models.course import Course
 from app.models.teacher import Teacher
 from app.models.class_group import ClassGroup, FaixaEtaria, DiaSemana, Turno
+from app.models.student import Aluno
+from app.models.guardian import Responsavel
+from app.models.enrollment import Matricula, StatusMatricula
+from app.models.waitlist import ListaEspera
 
 __all__ = [
     "User",
@@ -19,5 +23,10 @@ __all__ = [
     "FaixaEtaria",
     "DiaSemana",
     "Turno",
+    "Aluno",
+    "Responsavel",
+    "Matricula",
+    "StatusMatricula",
+    "ListaEspera",
 ]
 

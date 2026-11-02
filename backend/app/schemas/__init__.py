@@ -24,6 +24,26 @@ from app.schemas.class_group import (
     ClassGroupUpdate,
     ClassGroupResponse,
 )
+from app.schemas.guardian import (
+    ResponsavelBase,
+    ResponsavelCreate,
+    ResponsavelUpdate,
+    ResponsavelResponse,
+)
+from app.schemas.student import (
+    AlunoBase,
+    AlunoCreate,
+    AlunoUpdate,
+    AlunoResponse,
+)
+from app.schemas.enrollment import (
+    MatriculaBase,
+    MatriculaCreate,
+    MatriculaUpdate,
+    MatriculaResponse,
+    ListaEsperaCreate,
+    ListaEsperaResponse,
+)
 
 __all__ = [
     "UserBase",
@@ -55,5 +75,20 @@ __all__ = [
     "ClassGroupCreate",
     "ClassGroupUpdate",
     "ClassGroupResponse",
+    "ResponsavelBase",
+    "ResponsavelCreate",
+    "ResponsavelUpdate",
+    "ResponsavelResponse",
+    "AlunoBase",
+    "AlunoCreate",
+    "AlunoUpdate",
+    "AlunoResponse",
+    "MatriculaBase",
+    "MatriculaCreate",
+    "MatriculaUpdate",
+    "MatriculaResponse",
+    "ListaEsperaCreate",
+    "ListaEsperaResponse",
 ]
+
 
