@@ -24,6 +24,9 @@ if __name__ == "__main__":
     print(" 🔑 Usuário Administrador:   admin@hbartes.com")
     print(" 🔒 Senha Inicial:           admin123")
     print("=" * 68)
+    print(" ⚠️  IMPORTANTE: Acesse com HTTP comum (sem o 's'):")
+    print("    👉 http://localhost:8000 ou http://<IP_DO_SERVIDOR>:8000")
+    print("=" * 68)
     print(" Pressione CTRL+C para encerrar o servidor.\n")
 
     uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

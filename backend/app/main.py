@@ -117,7 +117,7 @@ if FRONTEND_DIST.exists():
     if (FRONTEND_DIST / "assets").exists():
         app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def serve_spa(full_path: str):
         # Se for um arquivo estático existente na raiz do dist
         file_path = FRONTEND_DIST / full_path
@@ -126,6 +126,6 @@ if FRONTEND_DIST.exists():
         # Para rotas do SPA ou /, retorna index.html
         return FileResponse(str(FRONTEND_DIST / "index.html"))
 else:
-    @app.get("/", tags=["Status"])
+    @app.api_route("/", methods=["GET", "HEAD"], tags=["Status"])
     def root():
         return api_info()
