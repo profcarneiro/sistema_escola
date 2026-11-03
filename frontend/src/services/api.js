@@ -69,6 +69,7 @@ export const api = {
   // Salas & Cursos
   getRooms: () => request('/rooms/'),
   getCourses: () => request('/courses/'),
+  createCourse: (data) => request('/courses/', { method: 'POST', body: JSON.stringify(data) }),
   getTeachers: () => request('/teachers/'),
   getClasses: () => request('/classes/'),
   createClass: (data) => request('/classes/', { method: 'POST', body: JSON.stringify(data) }),
@@ -81,6 +82,7 @@ export const api = {
   // Matrículas & Espera
   getEnrollments: () => request('/enrollments/'),
   createEnrollment: (data) => request('/enrollments/', { method: 'POST', body: JSON.stringify(data) }),
+  updateEnrollment: (id, data) => request(`/enrollments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   getWaitlist: (turmaId) => request(`/enrollments/waitlist/${turmaId}`),
 
   // Frequência & Diário

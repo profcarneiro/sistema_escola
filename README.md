@@ -132,7 +132,7 @@ cd /home/debian/antigravity/sistema_escola
 > 1. Detecta ou cria o ambiente virtual Python (`venv`).
 > 2. Configura os caminhos e variáveis de ambiente.
 > 3. Inicializa o banco de dados e dados padrão (admin, salas, cursos).
-> 4. Inicia o servidor unificado em **http://localhost:8000**.
+> 4. Inicia o servidor unificado em **http://localhost:8080**.
 
 Também é possível iniciar diretamente com Python ou Make:
 ```bash
@@ -151,8 +151,8 @@ make run
 ```
 
 Acesse no navegador:
-👉 **[http://localhost:8000](http://localhost:8000)** (Interface Web completa)  
-👉 **[http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs)** (Swagger UI da API)
+👉 **[http://localhost:8080](http://localhost:8080)** (Interface Web completa)  
+👉 **[http://localhost:8080/api/v1/docs](http://localhost:8080/api/v1/docs)** (Swagger UI da API)
 
 ---
 
@@ -160,11 +160,11 @@ Acesse no navegador:
 
 Caso deseje editar o código do frontend com recarregamento instantâneo do Vite:
 
-**Terminal 1 (Backend API):**
+**Terminal 1 (Backend API na porta 8080):**
 ```bash
 cd /home/debian/antigravity/sistema_escola
 source venv/bin/activate
-PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
 **Terminal 2 (Frontend Vite Dev Server):**
@@ -174,7 +174,7 @@ npm run dev
 ```
 
 Acesse no navegador:
-👉 **[http://localhost:3000](http://localhost:3000)**
+👉 **[http://localhost:3000](http://localhost:3000)** (o proxy encaminha as chamadas `/api` automaticamente para a porta 8080)
 
 Para recompilar os arquivos de produção do frontend após alterações:
 ```bash
@@ -186,32 +186,46 @@ npm run build
 
 ## 🖥️ Interface Web (Frontend)
 
-A aplicação conta com uma interface moderna, responsiva e intuitiva, com as seguintes telas e funcionalidades:
+A aplicação conta com uma interface moderna, responsiva e totalmente dinâmica, com os seguintes módulos:
 
 1. **Tela de Autenticação (Login):**
    - Login com e-mail e senha corporativa.
    - Exibição de credenciais padrão do administrador para facilidade no primeiro acesso.
 2. **Dashboard Executivo:**
-   - Indicadores em tempo real: total de alunos ativos, faturamento mensal, taxa de inadimplência e turmas ativas.
-   - Painel de ocupação física das 6 salas com barra de progresso visual do teto de 9 alunos.
-   - Atalhos para exportação de cadastros de alunos e faturamento em CSV.
-3. **Gestão de Alunos e Responsáveis:**
-   - Listagem com filtro e busca rápida por nome.
-   - Formulário de cadastro de aluno com cálculo automático de maioridade.
-   - Validação de **menor de 18 anos**: exige obrigatoriamente responsável legal com CPF, endereço e telefone (DDD 19).
-   - Bloqueio automático de segundo responsável (regra de 1 responsável único).
-4. **Infraestrutura e Turmas:**
-   - Monitoramento das 6 salas físicas (teto de 9 alunos).
-   - Grade das 13 turmas semanais com detalhes de professor, dia e horário.
-5. **Módulo Financeiro e Cobrança:**
+   - Indicadores em tempo real: total de alunos ativos, modalidades cadastradas, faturamento e turmas.
+   - Painel de ocupação física dos estúdios com teto de 9 alunos.
+   - Demonstrativo de Resultado Operacional (DRE) simplificado.
+3. **Gestão de Alunos & Responsáveis:**
+   - Listagem de alunos com cálculo automático de maioridade e responsável legal.
+   - Exibição direta dos **cursos e turmas vinculados a cada aluno**.
+   - Botão **"+ Matricular"** direto em cada linha do aluno para matrícula ágil.
+   - Validação estrita de menor de 18 anos exigindo responsável legal único com CPF.
+4. **Catálogo de Cursos & Modalidades Artísticas:**
+   - Visualização de todas as modalidades (Desenho, Aquarela, Óleo sobre Tela, Mangá, etc.).
+   - Botão **"+ Novo Curso"** com modal funcional para cadastrar novas modalidades com duração e mensalidade base.
+5. **Matrículas & Contratos:**
+   - Vínculo direto de alunos a turmas/cursos com número de contrato gerado automaticamente.
+   - Controle de descontos (`irmao`, `indicacao`, `bolsa`) e aulas experimentais.
+   - Botão para disparo de mensagem de boas-vindas e confirmação de matrícula via WhatsApp.
+6. **Controle de Turmas & Capacidade (Teto 9):**
+   - Grade das turmas por dia da semana, turno, horário, professor e sala.
+   - Medidor de vagas preenchidas de 9 alunos com alerta visual de lotação.
+   - Lista dos nomes dos alunos que pertencem a cada turma.
+   - Botão **"+ Nova Turma"** com modal e prevenção de conflitos de horário.
+7. **Diário de Classe & Frequência Semanal:**
+   - Seleção da turma ativa e data da aula.
+   - Lançamento do tema trabalhado, técnicas e materiais utilizados.
+   - Chamada interativa dos alunos matriculados com botões `PRESENTE` / `FALTA` / `JUSTIFICADA`.
+   - Histórico das aulas registradas.
+8. **Módulo Financeiro e Cobrança:**
    - Listagem de títulos com status visual (`Pendente`, `Pago`, `Atrasado`).
    - Modal de baixa de pagamento com formas exclusivas homologadas: **PIX, Cartão, Boleto ou Dinheiro**.
    - Cálculo automático de multa de 2% e juros para títulos vencidos.
-   - **Botão WhatsApp Direto (`wa.me`)** para envio de cobrança amigável via celular ou WhatsApp Web com um clique.
-6. **Módulo de Backup Local:**
+   - **Botão WhatsApp Direto (`wa.me`)** para envio de cobrança amigável via celular ou WhatsApp Web.
+9. **Módulo de Backup Local:**
    - Botão para criação instantânea de snapshot atômico do banco de dados SQLite.
    - Tabela de histórico de backups com tamanho em MB e data/hora.
-   - Link de download direto de arquivos `.db` para cópia em pendrive da escola.
+   - Link de download direto de arquivos `.db` para pendrive da escola.
 
 ---
 
@@ -228,11 +242,11 @@ A aplicação conta com uma interface moderna, responsiva e intuitiva, com as se
 Com o servidor em execução, a documentação técnica da API pode ser acessada em:
 
 - **Swagger UI (Documentação Interativa):**
-  [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs)
+  [http://localhost:8080/api/v1/docs](http://localhost:8080/api/v1/docs)
 - **ReDoc (Documentação Alternativa):**
-  [http://localhost:8000/api/v1/redoc](http://localhost:8000/api/v1/redoc)
+  [http://localhost:8080/api/v1/redoc](http://localhost:8080/api/v1/redoc)
 - **Status Técnico da API:**
-  [http://localhost:8000/api/v1/info](http://localhost:8000/api/v1/info)
+  [http://localhost:8080/api/v1/info](http://localhost:8080/api/v1/info)
 
 ---
 
