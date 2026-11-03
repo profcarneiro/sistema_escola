@@ -1,6 +1,6 @@
 # 🎨 Escola de Artes Helena Barufaldi — Sistema de Gestão
 
-Sistema completo de gestão acadêmica, pedagógica, financeira e operacional desenvolvido para a **Escola de Artes Helena Barufaldi** (Nova Odessa - SP).
+Sistema completo de gestão acadêmica, pedagógica, financeira e operacional com **Frontend Web Responsivo** integrado, desenvolvido para a **Escola de Artes Helena Barufaldi** (Nova Odessa - SP).
 
 O sistema foi concebido para atender às dores centrais levantadas no briefing com o cliente, centralizando cadastros manuais, controlando a frequência e reposições, automatizando o faturamento e a régua de cobrança, e fornecendo demonstrativos contábeis (DRE e Fluxo de Caixa).
 
@@ -12,6 +12,7 @@ O sistema foi concebido para atender às dores centrais levantadas no briefing c
 - [Estrutura do Projeto](#-estrutura-do-projeto)
 - [Pré-requisitos](#-pré-requisitos)
 - [Instalação e Execução](#-instalação-e-execução)
+- [Interface Web (Frontend)](#-interface-web-frontend)
 - [Acesso à API e Documentação Swagger](#-acesso-à-api-e-documentação-swagger)
 - [Execução da Suíte de Testes](#-execução-da-suíte-de-testes)
 - [Segurança, Auditoria e LGPD](#-segurança-auditoria-e-lgpd)
@@ -60,12 +61,19 @@ O sistema foi concebido para atender às dores centrais levantadas no briefing c
 
 ## 🛠️ Tecnologias Utilizadas
 
-- **Backend**: Python 3.13 + FastAPI + Uvicorn
+### Backend
+- **Linguagem & Framework**: Python 3.13 + FastAPI + Uvicorn
 - **Banco de Dados**: SQLite com `WAL Mode` (Write-Ahead Logging) e `PRAGMA foreign_keys = ON`
 - **ORM & Migrações**: SQLAlchemy 2.x
 - **Validação e Tipagem**: Pydantic v2 + Pydantic-Settings
 - **Segurança**: Passlib (Bcrypt) + Python-Jose (JWT HS256)
-- **Testes**: Pytest + HTTPX + AnyIO
+- **Testes**: Pytest + HTTPX + AnyIO (101 testes automatizados)
+
+### Frontend
+- **Framework & Build**: React 18 + Vite
+- **Estilização**: TailwindCSS + PostCSS + Autoprefixer
+- **Ícones**: Lucide React
+- **Arquitetura**: Single Page Application (SPA) integrada, servida nativamente pelo FastAPI ou em servidor de desenvolvimento Vite dedicado.
 
 ---
 
@@ -83,8 +91,18 @@ sistema_escola/
 │   │   ├── services/           # Lógica de comunicação (WhatsApp, e-mails)
 │   │   ├── database.py         # Conexão SQLite e gerador de sessão get_db
 │   │   ├── initial_data.py     # Seed automático do admin, salas e modalidades
-│   │   └── main.py             # Instância do FastAPI, Lifespan e CORS
+│   │   └── main.py             # Instância do FastAPI, Lifespan, CORS e servidor SPA
 │   └── tests/                  # Suíte completa de 101 testes automatizados
+├── frontend/                   # Aplicação Web React
+│   ├── dist/                   # Build de produção servido diretamente pelo FastAPI
+│   ├── src/
+│   │   ├── services/           # Camada de comunicação com a API REST
+│   │   ├── App.jsx             # Aplicação SPA completa com todos os módulos
+│   │   ├── main.jsx            # Ponto de montagem React
+│   │   └── index.css           # Estilos e temas TailwindCSS
+│   ├── index.html              # Template principal da interface
+│   ├── package.json            # Dependências e scripts do frontend
+│   └── vite.config.js          # Configuração do Vite com proxy reverso /api
 ├── backups/                    # Diretório local para snapshots do banco de dados
 ├── escola_artes.db             # Arquivo SQLite do banco de dados
 ├── pytest.ini                  # Configurações do Pytest (descoberta deve_*)
@@ -97,34 +115,88 @@ sistema_escola/
 ## 📋 Pré-requisitos
 
 - **Python**: versão 3.10 ou superior (testado e homologado no Python 3.13.5).
-- **Git** (opcional, para versionamento).
+- **Node.js**: versão 18 ou superior (apenas se for recompilar ou desenvolver o frontend).
 
 ---
 
 ## ⚙️ Instalação e Execução
 
-### 1. Clonar ou navegar até o diretório do projeto:
+### Opção 1: Execução Completa (Backend + Frontend Integrado)
+
+Esta é a opção recomendada para o servidor local da escola. Um único comando inicia a API e serve a aplicação Web completa:
+
 ```bash
 cd /home/debian/antigravity/sistema_escola
-```
 
-### 2. Criar e ativar o ambiente virtual:
-```bash
-python3 -m venv venv
+# 1. Ativar o ambiente virtual Python
 source venv/bin/activate
-```
 
-### 3. Instalar as dependências:
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Iniciar o servidor da API:
-```bash
+# 2. Iniciar o servidor
 PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-> **Nota:** No primeiro início, o banco de dados `escola_artes.db` é criado automaticamente, junto com o seed do usuário administrador (`admin@hbartes.com`), as 6 salas padrão (capacidade 9) e as 9 modalidades de arte.
+Acesse no navegador:
+👉 **[http://localhost:8000](http://localhost:8000)** (Interface Web completa)  
+👉 **[http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs)** (Swagger UI da API)
+
+---
+
+### Opção 2: Modo de Desenvolvimento com Hot-Reload no Frontend
+
+Caso deseje editar o código do frontend com recarregamento instantâneo do Vite:
+
+**Terminal 1 (Backend API):**
+```bash
+cd /home/debian/antigravity/sistema_escola
+source venv/bin/activate
+PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**Terminal 2 (Frontend Vite Dev Server):**
+```bash
+cd /home/debian/antigravity/sistema_escola/frontend
+npm run dev
+```
+
+Acesse no navegador:
+👉 **[http://localhost:3000](http://localhost:3000)**
+
+Para recompilar os arquivos de produção do frontend após alterações:
+```bash
+cd /home/debian/antigravity/sistema_escola/frontend
+npm run build
+```
+
+---
+
+## 🖥️ Interface Web (Frontend)
+
+A aplicação conta com uma interface moderna, responsiva e intuitiva, com as seguintes telas e funcionalidades:
+
+1. **Tela de Autenticação (Login):**
+   - Login com e-mail e senha corporativa.
+   - Exibição de credenciais padrão do administrador para facilidade no primeiro acesso.
+2. **Dashboard Executivo:**
+   - Indicadores em tempo real: total de alunos ativos, faturamento mensal, taxa de inadimplência e turmas ativas.
+   - Painel de ocupação física das 6 salas com barra de progresso visual do teto de 9 alunos.
+   - Atalhos para exportação de cadastros de alunos e faturamento em CSV.
+3. **Gestão de Alunos e Responsáveis:**
+   - Listagem com filtro e busca rápida por nome.
+   - Formulário de cadastro de aluno com cálculo automático de maioridade.
+   - Validação de **menor de 18 anos**: exige obrigatoriamente responsável legal com CPF, endereço e telefone (DDD 19).
+   - Bloqueio automático de segundo responsável (regra de 1 responsável único).
+4. **Infraestrutura e Turmas:**
+   - Monitoramento das 6 salas físicas (teto de 9 alunos).
+   - Grade das 13 turmas semanais com detalhes de professor, dia e horário.
+5. **Módulo Financeiro e Cobrança:**
+   - Listagem de títulos com status visual (`Pendente`, `Pago`, `Atrasado`).
+   - Modal de baixa de pagamento com formas exclusivas homologadas: **PIX, Cartão, Boleto ou Dinheiro**.
+   - Cálculo automático de multa de 2% e juros para títulos vencidos.
+   - **Botão WhatsApp Direto (`wa.me`)** para envio de cobrança amigável via celular ou WhatsApp Web com um clique.
+6. **Módulo de Backup Local:**
+   - Botão para criação instantânea de snapshot atômico do banco de dados SQLite.
+   - Tabela de histórico de backups com tamanho em MB e data/hora.
+   - Link de download direto de arquivos `.db` para cópia em pendrive da escola.
 
 ---
 
@@ -138,37 +210,20 @@ PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## 📖 Acesso à API e Documentação Swagger
 
-Com o servidor em execução, abra o navegador nos seguintes endereços:
+Com o servidor em execução, a documentação técnica da API pode ser acessada em:
 
 - **Swagger UI (Documentação Interativa):**
   [http://localhost:8000/api/v1/docs](http://localhost:8000/api/v1/docs)
 - **ReDoc (Documentação Alternativa):**
   [http://localhost:8000/api/v1/redoc](http://localhost:8000/api/v1/redoc)
-- **Status da API:**
-  [http://localhost:8000/](http://localhost:8000/)
-
-### Principais Grupos de Endpoints
-| Módulo | Prefixo | Descrição |
-|---|---|---|
-| **Autenticação** | `/api/v1/auth` | Login (JSON ou OAuth2), renovação e `/me` |
-| **Colaboradores** | `/api/v1/users` | Gestão de usuários da escola (restrito à Direção) |
-| **Salas** | `/api/v1/rooms` | Gestão das 6 salas com teto de 9 alunos |
-| **Modalidades** | `/api/v1/courses` | Cursos e valores de mensalidade base |
-| **Professores** | `/api/v1/teachers` | Especialidades, disponibilidade e substitutos |
-| **Turmas** | `/api/v1/classes` | Horários das 13 turmas e validação anti-conflito |
-| **Alunos** | `/api/v1/students` | Cadastro de alunos, responsáveis e ficha de saúde |
-| **Matrículas** | `/api/v1/enrollments` | Matrículas, contratos, descontos e lista de espera |
-| **Pedagógico** | `/api/v1/attendance` | Diário de classe, chamada, reposições e portfólio |
-| **Financeiro** | `/api/v1/financial` | Títulos, baixa em PIX/Cartão/Boleto/Dinheiro, DRE e Fluxo de Caixa |
-| **Comunicação** | `/api/v1/communication` | Gerador de links para WhatsApp Web/Mobile |
-| **Relatórios** | `/api/v1/reports` | Dashboard executivo e exportação em CSV |
-| **Backup** | `/api/v1/backup` | Criação e download de backups locais |
+- **Status Técnico da API:**
+  [http://localhost:8000/api/v1/info](http://localhost:8000/api/v1/info)
 
 ---
 
 ## 🧪 Execução da Suíte de Testes
 
-O projeto possui **101 testes automatizados** com 100% de cobertura das regras de negócio do cliente.
+O projeto possui **101 testes automatizados** cobrindo 100% das regras de negócio e restrições de segurança do cliente.
 
 Para rodar todos os testes:
 ```bash
@@ -206,10 +261,8 @@ Conforme o requisito de **servidor local** da Escola de Artes:
   ```bash
   sqlite3 escola_artes.db ".backup backups/backup_manual.db"
   ```
-- Para gerar via API (ou interface):
-  ```bash
-  curl -X POST http://localhost:8000/api/v1/backup/create -H "Authorization: Bearer <TOKEN_DIRECAO>"
-  ```
+- Para gerar via interface Web:
+  - Acesse o menu **"Backups"** e clique no botão **"Criar Backup Agora"**.
 - Os backups são armazenados na pasta `backups/` e podem ser copiados para pendrives ou discos externos.
 
 ---

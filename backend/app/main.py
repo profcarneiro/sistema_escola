@@ -2,6 +2,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
 from app.core.config import settings
 from app.database import engine, Base, SessionLocal
 from app.initial_data import init_db
@@ -88,8 +92,14 @@ app.include_router(backup_router, prefix=settings.API_V1_STR)
 
 
 
-@app.get("/", tags=["Status"])
-def root():
+@app.get("/health", tags=["Status"])
+def health_check():
+    """Health check para monitoramento do serviço."""
+    return {"status": "ok", "mensagem": "Servidor em execução normal."}
+
+
+@app.get("/api/v1/info", tags=["Status"])
+def api_info():
     """Boas-vindas e identificação da API da Escola de Artes Helena Barufaldi."""
     return {
         "sistema": settings.PROJECT_NAME,
@@ -100,7 +110,22 @@ def root():
     }
 
 
-@app.get("/health", tags=["Status"])
-def health_check():
-    """Health check para monitoramento do serviço."""
-    return {"status": "ok", "mensagem": "Servidor em execução normal."}
+# Suporte ao frontend SPA (dist)
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+if FRONTEND_DIST.exists():
+    if (FRONTEND_DIST / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        # Se for um arquivo estático existente na raiz do dist
+        file_path = FRONTEND_DIST / full_path
+        if full_path and file_path.is_file():
+            return FileResponse(str(file_path))
+        # Para rotas do SPA ou /, retorna index.html
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
+else:
+    @app.get("/", tags=["Status"])
+    def root():
+        return api_info()
