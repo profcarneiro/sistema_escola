@@ -119,20 +119,35 @@ sistema_escola/
 
 ---
 
-## ⚙️ Instalação e Execução
+## ⚡ Inicialização Rápida (Comando Único)
 
-### Opção 1: Execução Completa (Backend + Frontend Integrado)
-
-Esta é a opção recomendada para o servidor local da escola. Um único comando inicia a API e serve a aplicação Web completa:
+Para inicializar todo o sistema (Backend FastAPI + Frontend Web Integrado) com um único comando:
 
 ```bash
 cd /home/debian/antigravity/sistema_escola
+./iniciar.sh
+```
 
-# 1. Ativar o ambiente virtual Python
-source venv/bin/activate
+> **O que o script faz automaticamente:**
+> 1. Detecta ou cria o ambiente virtual Python (`venv`).
+> 2. Configura os caminhos e variáveis de ambiente.
+> 3. Inicializa o banco de dados e dados padrão (admin, salas, cursos).
+> 4. Inicia o servidor unificado em **http://localhost:8000**.
 
-# 2. Iniciar o servidor
-PYTHONPATH=backend uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+Também é possível iniciar diretamente com Python ou Make:
+```bash
+python3 run.py
+# ou
+make run
+```
+
+---
+
+## ⚙️ Instalação e Execução Detalhada
+
+### Opção 1: Execução Padrão via Script Unificado
+```bash
+./iniciar.sh
 ```
 
 Acesse no navegador:
