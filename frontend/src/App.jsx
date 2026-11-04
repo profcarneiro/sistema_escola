@@ -3,7 +3,7 @@ import {
   Palette, Users, BookOpen, Calendar, CreditCard, MessageSquare,
   HardDrive, LogOut, Plus, CheckCircle, AlertTriangle, FileText,
   DollarSign, TrendingUp, ShieldCheck, Clock, Download, RefreshCw, X,
-  GraduationCap, Check, Edit, Trash2, Briefcase, Phone, Mail
+  GraduationCap, Check, Edit, Trash2, Briefcase, Phone, Mail, Menu
 } from 'lucide-react';
 import { api, authStorage } from './services/api';
 
@@ -13,6 +13,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Estados de dados principais
   const [dashboard, setDashboard] = useState(null);
@@ -538,16 +539,40 @@ export default function App() {
         </div>
       )}
 
+      {/* Overlay Backdrop Mobile */}
+      {isMobileMenuOpen && (
+        <div
+          onClick={() => setIsMobileMenuOpen(false)}
+          className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-30 md:hidden transition-opacity"
+          aria-hidden="true"
+        />
+      )}
+
       {/* Sidebar de Navegação */}
-      <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 border-r border-slate-800">
-        <div className="p-5 border-b border-slate-800 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-600 flex items-center justify-center text-white shadow-md">
-            <Palette className="w-6 h-6" />
+      <aside
+        className={`fixed md:static inset-y-0 left-0 z-40 w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 border-r border-slate-800 transition-transform duration-300 ease-in-out ${
+          isMobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full md:translate-x-0'
+        }`}
+      >
+        <div className="p-5 border-b border-slate-800 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-600 flex items-center justify-center text-white shadow-md">
+              <Palette className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="font-bold text-white text-base leading-tight">Helena Barufaldi</h2>
+              <span className="text-[11px] font-semibold text-amber-500 uppercase tracking-wider">Escola de Artes</span>
+            </div>
           </div>
-          <div>
-            <h2 className="font-bold text-white text-base leading-tight">Helena Barufaldi</h2>
-            <span className="text-[11px] font-semibold text-amber-500 uppercase tracking-wider">Escola de Artes</span>
-          </div>
+          {/* Botão Fechar Menu Lateral no Mobile */}
+          <button
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="md:hidden text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+            title="Fechar menu lateral"
+            aria-label="Fechar menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -568,7 +593,10 @@ export default function App() {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setIsMobileMenuOpen(false);
+                }}
                 className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition ${
                   active
                     ? 'bg-amber-600 text-white shadow-md'
@@ -604,38 +632,49 @@ export default function App() {
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-y-auto">
+      <main className="flex-1 flex flex-col overflow-y-auto min-w-0">
         {/* Top Header */}
-        <header className="bg-white border-b border-slate-200 px-8 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-          <div>
-            <h1 className="text-xl font-bold text-slate-800">
-              {activeTab === 'dashboard' && 'Painel Geral de Indicadores'}
-              {activeTab === 'students' && 'Gestão de Alunos e Responsáveis'}
-              {activeTab === 'courses' && 'Catálogo de Cursos & Modalidades Artísticas'}
-              {activeTab === 'teachers' && 'Corpo Docente e Professores'}
-              {activeTab === 'enrollments' && 'Matrículas de Alunos e Vínculos com Turmas'}
-              {activeTab === 'classes' && 'Controle de Turmas e Capacidade Máxima'}
-              {activeTab === 'rooms' && 'Estúdios Físicos (Teto de 9 Alunos)'}
-              {activeTab === 'financial' && 'Gestão Financeira, Cobrança e DRE'}
-              {activeTab === 'attendance' && 'Diário de Classe, Presença e Frequência'}
-              {activeTab === 'backups' && 'Segurança e Backup Local SQLite'}
-            </h1>
-            <p className="text-xs text-slate-500">Unidade Nova Odessa/SP • Porta 8080 • Servidor Local</p>
+        <header className="bg-white border-b border-slate-200 px-4 sm:px-6 md:px-8 py-3.5 sm:py-4 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+          <div className="flex items-center gap-3 min-w-0">
+            {/* Botão Hamburger Mobile */}
+            <button
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden p-2 -ml-2 text-slate-700 hover:text-amber-700 hover:bg-slate-100 rounded-lg transition shrink-0"
+              title="Abrir menu lateral"
+              aria-label="Abrir menu lateral"
+            >
+              <Menu className="w-6 h-6" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg md:text-xl font-bold text-slate-800 truncate">
+                {activeTab === 'dashboard' && 'Painel Geral de Indicadores'}
+                {activeTab === 'students' && 'Gestão de Alunos e Responsáveis'}
+                {activeTab === 'courses' && 'Catálogo de Cursos & Modalidades'}
+                {activeTab === 'teachers' && 'Corpo Docente e Professores'}
+                {activeTab === 'enrollments' && 'Matrículas & Contratos'}
+                {activeTab === 'classes' && 'Turmas e Capacidade Máxima'}
+                {activeTab === 'rooms' && 'Estúdios Físicos (Teto de 9 Alunos)'}
+                {activeTab === 'financial' && 'Gestão Financeira & DRE'}
+                {activeTab === 'attendance' && 'Diário de Classe & Presença'}
+                {activeTab === 'backups' && 'Segurança & Backup Local SQLite'}
+              </h1>
+              <p className="text-xs text-slate-500 hidden sm:block">Unidade Nova Odessa/SP • Porta 8080 • Servidor Local</p>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <button
               onClick={loadDashboardData}
-              className="p-2 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition border border-slate-200 flex items-center gap-1.5 text-xs font-semibold"
+              className="p-2 sm:px-3 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition border border-slate-200 flex items-center gap-1.5 text-xs font-semibold"
               title="Atualizar dados"
             >
-              <RefreshCw className="w-3.5 h-3.5" /> Atualizar
+              <RefreshCw className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Atualizar</span>
             </button>
           </div>
         </header>
 
         {/* Content Body */}
-        <div className="p-8 space-y-6">
+        <div className="p-4 sm:p-6 md:p-8 space-y-6">
 
           {/* TAB 1: DASHBOARD */}
           {activeTab === 'dashboard' && (
@@ -755,12 +794,12 @@ export default function App() {
           {/* TAB 2: ALUNOS & RESPONSÁVEIS */}
           {activeTab === 'students' && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+              <div className="p-4 sm:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Cadastro de Alunos e Cursos Matriculados</h3>
                   <p className="text-xs text-slate-500">Regra: Alunos menores exigem responsável legal único. Vincule cursos diretamente no botão "+ Matricular".</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <a
                     href={api.exportStudentsUrl}
                     className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition flex items-center gap-1.5"
@@ -859,14 +898,14 @@ export default function App() {
           {/* TAB 3: CURSOS & MODALIDADES ARTÍSTICAS */}
           {activeTab === 'courses' && (
             <div className="space-y-6">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex items-center justify-between">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Catálogo de Modalidades de Arte</h3>
                   <p className="text-xs text-slate-500">Cadastre, edite e gerencie as modalidades artísticas e mensalidades da escola.</p>
                 </div>
                 <button
                   onClick={() => setShowCourseModal(true)}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
                 >
                   <Plus className="w-3.5 h-3.5" /> Novo Curso / Modalidade
                 </button>
@@ -939,14 +978,14 @@ export default function App() {
           {/* TAB 4: PROFESSORES & DOCENTES */}
           {activeTab === 'teachers' && (
             <div className="space-y-6">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex items-center justify-between">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Corpo Docente e Professores</h3>
                   <p className="text-xs text-slate-500">Cadastre os professores da escola para vinculá-los às turmas semanais.</p>
                 </div>
                 <button
                   onClick={() => setShowTeacherModal(true)}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
                 >
                   <Plus className="w-3.5 h-3.5" /> Novo Professor
                 </button>
@@ -1043,7 +1082,7 @@ export default function App() {
           {/* TAB 5: MATRÍCULAS & CONTRATOS */}
           {activeTab === 'enrollments' && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+              <div className="p-4 sm:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Matrículas Ativas e Vínculos de Alunos</h3>
                   <p className="text-xs text-slate-500">Vínculo direto entre Aluno e Turma/Curso com contrato e controle de desconto.</p>
@@ -1053,7 +1092,7 @@ export default function App() {
                     setPreselectedStudentId(null);
                     setShowEnrollmentModal(true);
                   }}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
                 >
                   <Plus className="w-3.5 h-3.5" /> Nova Matrícula
                 </button>
@@ -1125,14 +1164,14 @@ export default function App() {
           {/* TAB 6: TURMAS & HORÁRIOS */}
           {activeTab === 'classes' && (
             <div className="space-y-6">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex items-center justify-between">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Grade de Turmas e Horários Semanais</h3>
                   <p className="text-xs text-slate-500">Teto rigoroso de 9 alunos por turma. Validação automática contra choque de sala e professor.</p>
                 </div>
                 <button
                   onClick={() => setShowClassModal(true)}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
                 >
                   <Plus className="w-3.5 h-3.5" /> Nova Turma
                 </button>
@@ -1288,12 +1327,12 @@ export default function App() {
 
               {/* Títulos Gerais */}
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+                <div className="p-4 sm:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="font-bold text-slate-800 text-lg">Mensalidades e Títulos Financeiros</h3>
                     <p className="text-xs text-slate-500">Formas homologadas: PIX, Cartão, Boleto e Dinheiro.</p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <a
                       href={api.exportInvoicesUrl}
                       className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition flex items-center gap-1.5"
@@ -1500,15 +1539,15 @@ export default function App() {
 
           {/* TAB 10: BACKUPS */}
           {activeTab === 'backups' && (
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
-              <div className="flex items-center justify-between">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Backups Locais do Banco de Dados SQLite</h3>
                   <p className="text-xs text-slate-500">Requisito do briefing: Disponibilidade e rotina de recuperação local.</p>
                 </div>
                 <button
                   onClick={handleBackup}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
                 >
                   <HardDrive className="w-4 h-4" /> Criar Snapshot Agora
                 </button>
