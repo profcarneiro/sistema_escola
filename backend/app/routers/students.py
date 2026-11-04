@@ -157,6 +157,10 @@ def update_student(
 
     if aluno_update.nome is not None:
         aluno.nome = aluno_update.nome.strip()
+    if aluno_update.data_nascimento is not None:
+        aluno.data_nascimento = aluno_update.data_nascimento
+    if aluno_update.cpf is not None:
+        aluno.cpf = aluno_update.cpf.strip() if aluno_update.cpf else None
     if aluno_update.email is not None:
         aluno.email = aluno_update.email.strip().lower()
     if aluno_update.telefone is not None:

@@ -37,6 +37,8 @@ class Matricula(Base):
     valor_mensalidade = Column(Float, nullable=False)
     desconto_percentual = Column(Float, default=0.0, nullable=False)  # ex: 10.0 para 10%
     tipo_desconto = Column(String(50), nullable=True)  # irmao, indicacao, bolsa
+    dia_vencimento = Column(Integer, default=10, nullable=True)  # dia preferencial (ex: 5, 10, 15, 20)
+    quantidade_parcelas = Column(Integer, default=12, nullable=True)  # quantidade de mensalidades/meses contratados
 
     # Trancamento/Cancelamento
     motivo_cancelamento = Column(Text, nullable=True)

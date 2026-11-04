@@ -19,7 +19,8 @@ from app.schemas.attendance import (
     AttendanceBatchCreate, AttendanceResponse,
     ClassMakeUpCreate, ClassMakeUpResponse,
     EvaluationCreate, EvaluationResponse,
-    validar_janela_reposicao
+    validar_janela_reposicao,
+    ClassAttendanceSummary, StudentAttendanceReport, AttendanceRecordItem
 )
 from app.routers.auth import get_current_active_user, require_roles
 
@@ -394,3 +395,125 @@ def get_student_evaluations(
             r.professor_nome = ev.professor.nome
         res.append(r)
     return res
+
+
+# ─── Relatórios de Frequência e Presença ──────────────────────────────────────
+
+@router.get(
+    "/reports/classes-summary",
+    response_model=List[ClassAttendanceSummary],
+    summary="Relatório geral de presenças e frequência por turma"
+)
+def get_classes_attendance_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    turmas = db.query(ClassGroup).options(
+        joinedload(ClassGroup.curso),
+        joinedload(ClassGroup.professor)
+    ).filter(ClassGroup.ativa.is_(True)).order_by(ClassGroup.nome.asc()).all()
+
+    # Se for professor, limitar às turmas dele
+    if current_user.role == UserRole.PROFESSOR.value:
+        prof = db.query(Teacher).filter((Teacher.user_id == current_user.id) | (Teacher.email == current_user.email)).first()
+        if prof:
+            turmas = [t for t in turmas if t.professor_id == prof.id]
+
+    res = []
+    for turma in turmas:
+        lessons = db.query(Lesson).filter(Lesson.turma_id == turma.id).all()
+        lesson_ids = [l.id for l in lessons]
+
+        presencas = 0
+        faltas = 0
+        justificadas = 0
+
+        if lesson_ids:
+            attendances = db.query(Attendance).filter(Attendance.lesson_id.in_(lesson_ids)).all()
+            for att in attendances:
+                if att.status == StatusPresenca.PRESENTE.value:
+                    presencas += 1
+                elif att.status == StatusPresenca.FALTA.value:
+                    faltas += 1
+                elif att.status == StatusPresenca.JUSTIFICADA.value:
+                    justificadas += 1
+
+        total_regs = presencas + faltas + justificadas
+        taxa = round((presencas / total_regs) * 100, 1) if total_regs > 0 else 100.0
+
+        res.append(ClassAttendanceSummary(
+            turma_id=turma.id,
+            turma_nome=turma.nome,
+            curso_nome=turma.curso.nome if turma.curso else "Sem curso",
+            professor_nome=turma.professor.nome if turma.professor else "Sem professor",
+            total_aulas=len(lessons),
+            total_registros=total_regs,
+            total_presencas=presencas,
+            total_faltas=faltas,
+            total_justificadas=justificadas,
+            taxa_presenca_percentual=taxa
+        ))
+    return res
+
+
+@router.get(
+    "/reports/student-history",
+    response_model=StudentAttendanceReport,
+    summary="Histórico e taxa de frequência detalhada do aluno"
+)
+def get_student_attendance_history(
+    aluno_id: int = Query(..., description="ID do aluno"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user)
+):
+    aluno = db.query(Aluno).filter(Aluno.id == aluno_id).first()
+    if not aluno:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado.")
+
+    attendances = db.query(Attendance).options(
+        joinedload(Attendance.lesson).joinedload(Lesson.turma)
+    ).filter(Attendance.aluno_id == aluno_id).all()
+
+    presencas = 0
+    faltas = 0
+    justificadas = 0
+    registros = []
+
+    for att in attendances:
+        if att.status == StatusPresenca.PRESENTE.value:
+            presencas += 1
+        elif att.status == StatusPresenca.FALTA.value:
+            faltas += 1
+        elif att.status == StatusPresenca.JUSTIFICADA.value:
+            justificadas += 1
+
+        data_aula = att.lesson.data_aula if att.lesson else date.today()
+        turma_id = att.lesson.turma_id if att.lesson else 0
+        turma_nome = att.lesson.turma.nome if att.lesson and att.lesson.turma else "Turma"
+        tema = att.lesson.tema_aula if att.lesson else "Aula"
+
+        registros.append(AttendanceRecordItem(
+            data_aula=data_aula,
+            turma_id=turma_id,
+            turma_nome=turma_nome,
+            tema_aula=tema,
+            status=att.status,
+            motivo_justificativa=att.motivo_justificativa
+        ))
+
+    # Ordenar registros por data decrescente
+    registros.sort(key=lambda r: r.data_aula, reverse=True)
+    total_regs = presencas + faltas + justificadas
+    taxa = round((presencas / total_regs) * 100, 1) if total_regs > 0 else 100.0
+
+    return StudentAttendanceReport(
+        aluno_id=aluno.id,
+        aluno_nome=aluno.nome,
+        total_aulas=len(attendances),
+        total_registros=total_regs,
+        total_presencas=presencas,
+        total_faltas=faltas,
+        total_justificadas=justificadas,
+        taxa_presenca_percentual=taxa,
+        registros=registros
+    )

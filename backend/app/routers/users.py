@@ -6,17 +6,18 @@ from app.core.security import get_password_hash
 from app.core.audit import registrar_auditoria
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.schemas.user import UserCreate, UserUpdate, UserResponse
+from app.models.teacher import Teacher
+from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserRoleEnum
 from app.routers.auth import require_roles
 
 router = APIRouter(
     prefix="/users",
     tags=["Usuários"],
-    dependencies=[Depends(require_roles(UserRole.DIRECAO.value))]
+    dependencies=[Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))]
 )
 
 
-@router.get("/", response_model=List[UserResponse], summary="Listar usuários (Apenas Direção)")
+@router.get("/", response_model=List[UserResponse], summary="Listar usuários")
 def list_users(
     skip: int = Query(0, ge=0, description="Número de registros a pular"),
     limit: int = Query(100, ge=1, le=500, description="Limite de registros retornados"),
@@ -37,12 +38,12 @@ def list_users(
     return users
 
 
-@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED, summary="Criar novo usuário (Apenas Direção)")
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED, summary="Criar novo usuário")
 def create_user(
     user_in: UserCreate,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.DIRECAO.value))
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))
 ):
     """Cadastra um novo usuário colaborador no sistema com senha criptografada."""
     client_ip = request.client.host if request.client else None
@@ -56,16 +57,29 @@ def create_user(
             detail="Já existe um usuário cadastrado com este e-mail."
         )
 
+    prof_id = user_in.professor_id
+    if not prof_id and user_in.role == UserRoleEnum.PROFESSOR:
+        t = db.query(Teacher).filter(Teacher.email == email_clean).first()
+        if t:
+            prof_id = t.id
+
     novo_usuario = User(
         nome=user_in.nome.strip(),
         email=email_clean,
         senha_hash=get_password_hash(user_in.senha),
         role=user_in.role.value,
+        professor_id=prof_id,
         ativo=user_in.ativo
     )
     db.add(novo_usuario)
     db.commit()
     db.refresh(novo_usuario)
+
+    if prof_id:
+        t_link = db.query(Teacher).filter(Teacher.id == prof_id).first()
+        if t_link:
+            t_link.user_id = novo_usuario.id
+            db.commit()
 
     registrar_auditoria(
         db=db,
@@ -101,7 +115,7 @@ def update_user(
     user_update: UserUpdate,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.DIRECAO.value))
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))
 ):
     """Atualiza dados cadastrais, cargo, status ou senha de um usuário."""
     client_ip = request.client.host if request.client else None
@@ -134,6 +148,14 @@ def update_user(
         user.role = user_update.role.value
         alteracoes["role"] = user.role
 
+    if user_update.professor_id is not None:
+        user.professor_id = user_update.professor_id
+        alteracoes["professor_id"] = user.professor_id
+        if user_update.professor_id:
+            t = db.query(Teacher).filter(Teacher.id == user_update.professor_id).first()
+            if t:
+                t.user_id = user.id
+
     if user_update.ativo is not None:
         user.ativo = user_update.ativo
         alteracoes["ativo"] = user.ativo
@@ -163,7 +185,7 @@ def delete_user(
     user_id: int,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_roles(UserRole.DIRECAO.value))
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))
 ):
     """Remove um colaborador do sistema. Não permite auto-exclusão do usuário logado."""
     client_ip = request.client.host if request.client else None

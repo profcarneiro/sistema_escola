@@ -1,12 +1,14 @@
 from datetime import date, datetime, timezone
 from typing import List, Optional
 import uuid
+import calendar
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.audit import registrar_auditoria
 from app.database import get_db
 from app.models.enrollment import Matricula, StatusMatricula
+from app.models.financial import Invoice, StatusTitulo
 from app.models.waitlist import ListaEspera
 from app.models.student import Aluno
 from app.models.class_group import ClassGroup
@@ -122,6 +124,9 @@ def create_enrollment(
 
     status_inicial = StatusMatricula.EXPERIMENTAL.value if mat_in.aula_experimental else StatusMatricula.ATIVA.value
 
+    dia_vencimento = mat_in.dia_vencimento or 10
+    quantidade_parcelas = mat_in.quantidade_parcelas if mat_in.quantidade_parcelas is not None else 12
+
     nova_matricula = Matricula(
         aluno_id=mat_in.aluno_id,
         turma_id=mat_in.turma_id,
@@ -134,10 +139,50 @@ def create_enrollment(
         valor_mensalidade=mat_in.valor_mensalidade,
         desconto_percentual=mat_in.desconto_percentual,
         tipo_desconto=mat_in.tipo_desconto,
+        dia_vencimento=dia_vencimento,
+        quantidade_parcelas=quantidade_parcelas,
         aula_experimental=mat_in.aula_experimental,
         observacoes=mat_in.observacoes
     )
     db.add(nova_matricula)
+    db.flush()
+
+    # Gerar todas as faturas/mensalidades se não for aula experimental
+    if not mat_in.aula_experimental and quantidade_parcelas > 0:
+        ano_cursor = mat_in.data_inicio.year
+        mes_cursor = mat_in.data_inicio.month
+        hoje = date.today()
+        desconto_val = round(mat_in.valor_mensalidade * (mat_in.desconto_percentual / 100), 2)
+        valor_final = round(mat_in.valor_mensalidade - desconto_val, 2)
+        resp_id = aluno.responsavel.id if aluno.responsavel else None
+
+        for i in range(quantidade_parcelas):
+            max_dias = calendar.monthrange(ano_cursor, mes_cursor)[1]
+            dia_efetivo = min(dia_vencimento, max_dias)
+            data_venc = date(ano_cursor, mes_cursor, dia_efetivo)
+            competencia = f"{ano_cursor:04d}-{mes_cursor:02d}"
+            status_inv = StatusTitulo.ATRASADO.value if data_venc < hoje else StatusTitulo.PENDENTE.value
+            desc = f"Mensalidade {i+1}/{quantidade_parcelas} ({mes_cursor:02d}/{ano_cursor}) - {turma.nome}"
+
+            fatura = Invoice(
+                matricula_id=nova_matricula.id,
+                aluno_id=aluno.id,
+                responsavel_id=resp_id,
+                descricao=desc,
+                competencia=competencia,
+                valor_nominal=mat_in.valor_mensalidade,
+                desconto_aplicado=desconto_val,
+                valor_final=valor_final,
+                data_vencimento=data_venc,
+                status=status_inv
+            )
+            db.add(fatura)
+
+            mes_cursor += 1
+            if mes_cursor > 12:
+                mes_cursor = 1
+                ano_cursor += 1
+
     db.commit()
     db.refresh(nova_matricula)
 
@@ -214,6 +259,12 @@ def update_enrollment(
         if mat_update.contrato_assinado:
             matricula.data_assinatura_contrato = datetime.now(timezone.utc)
 
+    if mat_update.valor_mensalidade is not None:
+        matricula.valor_mensalidade = mat_update.valor_mensalidade
+    if mat_update.dia_vencimento is not None:
+        matricula.dia_vencimento = mat_update.dia_vencimento
+    if mat_update.quantidade_parcelas is not None:
+        matricula.quantidade_parcelas = mat_update.quantidade_parcelas
     if mat_update.desconto_percentual is not None:
         matricula.desconto_percentual = mat_update.desconto_percentual
     if mat_update.tipo_desconto is not None:

@@ -149,3 +149,39 @@ class EvaluationResponse(EvaluationBase):
     professor_nome: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ─── Relatórios Gerenciais de Frequência ──────────────────────────────────────
+
+class AttendanceRecordItem(BaseModel):
+    data_aula: date
+    turma_id: int
+    turma_nome: str
+    tema_aula: str
+    status: str
+    motivo_justificativa: Optional[str] = None
+
+
+class ClassAttendanceSummary(BaseModel):
+    turma_id: int
+    turma_nome: str
+    curso_nome: str
+    professor_nome: Optional[str] = None
+    total_aulas: int
+    total_registros: int
+    total_presencas: int
+    total_faltas: int
+    total_justificadas: int
+    taxa_presenca_percentual: float
+
+
+class StudentAttendanceReport(BaseModel):
+    aluno_id: int
+    aluno_nome: str
+    total_aulas: int
+    total_registros: int
+    total_presencas: int
+    total_faltas: int
+    total_justificadas: int
+    taxa_presenca_percentual: float
+    registros: list[AttendanceRecordItem]

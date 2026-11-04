@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import enum
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum, ForeignKey
 from app.database import Base
 
 
@@ -20,6 +20,7 @@ class User(Base):
     email = Column(String(150), unique=True, index=True, nullable=False)
     senha_hash = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default=UserRole.SECRETARIA.value)
+    professor_id = Column(Integer, ForeignKey("teachers.id", use_alter=True, name="fk_users_professor_id", ondelete="SET NULL"), nullable=True)
     ativo = Column(Boolean, default=True, nullable=False)
     criado_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     atualizado_em = Column(

@@ -3,7 +3,8 @@ import {
   Palette, Users, BookOpen, Calendar, CreditCard, MessageSquare,
   HardDrive, LogOut, Plus, CheckCircle, AlertTriangle, FileText,
   DollarSign, TrendingUp, ShieldCheck, Clock, Download, RefreshCw, X,
-  GraduationCap, Check, Edit, Trash2, Briefcase, Phone, Mail, Menu
+  GraduationCap, Check, Edit, Trash2, Briefcase, Phone, Mail, Menu,
+  Search, UserCheck, Shield, ChevronDown, Filter, BarChart2
 } from 'lucide-react';
 import { api, authStorage } from './services/api';
 
@@ -43,14 +44,30 @@ export default function App() {
 
   // Modais de Alunos e Matrículas
   const [showStudentModal, setShowStudentModal] = useState(false);
+  const [editingStudent, setEditingStudent] = useState(null);
   const [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
+  const [editingEnrollment, setEditingEnrollment] = useState(null);
   const [preselectedStudentId, setPreselectedStudentId] = useState(null);
 
-  // Modais de Turmas e Financeiro
+  // Modais de Turmas, Financeiro e Usuários
   const [showClassModal, setShowClassModal] = useState(false);
   const [showPayModal, setShowPayModal] = useState(null);
   const [payMethod, setPayMethod] = useState('PIX');
   const [payValue, setPayValue] = useState('');
+  const [users, setUsers] = useState([]);
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [modalError, setModalError] = useState('');
+
+  // Filtros Financeiro
+  const [invoiceFilter, setInvoiceFilter] = useState('TODAS');
+  const [invoiceSearch, setInvoiceSearch] = useState('');
+
+  // Sub-abas e relatórios de Frequência / Diário
+  const [attendanceSubTab, setAttendanceSubTab] = useState('chamada'); // 'chamada' | 'turmas' | 'aluno'
+  const [attendanceClassesSummary, setAttendanceClassesSummary] = useState([]);
+  const [selectedStudentForHistory, setSelectedStudentForHistory] = useState('');
+  const [studentAttendanceHistory, setStudentAttendanceHistory] = useState(null);
 
   // Estados para Frequência / Diário
   const [selectedClassForAttendance, setSelectedClassForAttendance] = useState('');
@@ -60,6 +77,10 @@ export default function App() {
   const [lessonMaterials, setLessonMaterials] = useState('');
   const [attendanceRecords, setAttendanceRecords] = useState({});
   const [classLessonsHistory, setClassLessonsHistory] = useState([]);
+
+  // Permissões
+  const isProfessor = user?.role === 'Professor';
+  const isAdminOrCoord = user?.role === 'Direção' || user?.role === 'Coordenação';
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -115,6 +136,14 @@ export default function App() {
       setDefaulters(def);
       setBackups(bkp);
 
+      if (isAdminOrCoord) {
+        api.getUsers().then(u => setUsers(u)).catch(() => setUsers([]));
+      }
+
+      if (activeTab === 'attendance') {
+        api.getAttendanceClassesSummary().then(cs => setAttendanceClassesSummary(cs)).catch(() => setAttendanceClassesSummary([]));
+      }
+
       // Carrega DRE do mês
       const hoje = new Date();
       const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().split('T')[0];
@@ -131,6 +160,26 @@ export default function App() {
       loadDashboardData();
     }
   }, [token, activeTab]);
+
+  // Se selecionar aluno para histórico de frequência
+  useEffect(() => {
+    if (selectedStudentForHistory) {
+      api.getAttendanceStudentHistory(selectedStudentForHistory)
+        .then(data => setStudentAttendanceHistory(data))
+        .catch(() => setStudentAttendanceHistory(null));
+    } else {
+      setStudentAttendanceHistory(null);
+    }
+  }, [selectedStudentForHistory]);
+
+  // Se trocar a aba de frequência para turmas, atualiza resumo
+  useEffect(() => {
+    if (activeTab === 'attendance' && attendanceSubTab === 'turmas') {
+      api.getAttendanceClassesSummary()
+        .then(cs => setAttendanceClassesSummary(cs))
+        .catch(() => setAttendanceClassesSummary([]));
+    }
+  }, [activeTab, attendanceSubTab]);
 
   // Se trocar a turma na frequência, carrega histórico de aulas
   useEffect(() => {
@@ -214,9 +263,10 @@ export default function App() {
 
   // --- SUBMISSION HANDLERS ---
 
-  // 1. Cadastrar Aluno
-  const handleCreateStudent = async (e) => {
+  // 1. Cadastrar / Editar Aluno
+  const handleSaveStudent = async (e) => {
     e.preventDefault();
+    setModalError('');
     const formData = new FormData(e.target);
     const dataNascimento = formData.get('data_nascimento');
     const isMenor = new Date().getFullYear() - new Date(dataNascimento).getFullYear() < 18;
@@ -240,11 +290,30 @@ export default function App() {
     };
 
     try {
-      await api.createStudent(payload);
-      showToast('Aluno cadastrado com sucesso!');
+      if (editingStudent) {
+        await api.updateStudent(editingStudent.id, {
+          nome: payload.nome,
+          data_nascimento: payload.data_nascimento,
+          cpf: payload.cpf,
+          telefone: payload.telefone,
+          email: payload.email,
+          endereco: payload.endereco,
+          alergias: payload.alergias,
+          autorizacao_imagem: payload.autorizacao_imagem,
+        });
+        if (payload.responsavel && editingStudent.responsavel) {
+          await api.updateGuardian(editingStudent.id, payload.responsavel);
+        }
+        showToast('Aluno e responsável atualizados com sucesso!');
+        setEditingStudent(null);
+      } else {
+        await api.createStudent(payload);
+        showToast('Aluno cadastrado com sucesso!');
+      }
       setShowStudentModal(false);
       loadDashboardData();
     } catch (err) {
+      setModalError(err.message || 'Erro ao salvar aluno.');
       showToast(err.message, 'error');
     }
   };
@@ -372,6 +441,7 @@ export default function App() {
   // 4. Matricular Aluno em Turma/Curso
   const handleCreateEnrollment = async (e) => {
     e.preventDefault();
+    setModalError('');
     const formData = new FormData(e.target);
     const descTipo = formData.get('tipo_desconto');
     const payload = {
@@ -383,15 +453,94 @@ export default function App() {
       valor_mensalidade: parseFloat(formData.get('valor_mensalidade') || '0'),
       desconto_percentual: parseFloat(formData.get('desconto_percentual') || '0'),
       tipo_desconto: descTipo && descTipo !== 'nenhum' ? descTipo : null,
+      dia_vencimento: parseInt(formData.get('dia_vencimento') || '10'),
+      quantidade_parcelas: parseInt(formData.get('quantidade_parcelas') || '12'),
       aula_experimental: formData.get('aula_experimental') === 'on',
       observacoes: formData.get('observacoes') || null,
     };
 
     try {
       await api.createEnrollment(payload);
-      showToast('Aluno matriculado com sucesso no curso!');
+      showToast('Aluno matriculado e faturas geradas com sucesso!');
       setShowEnrollmentModal(false);
       setPreselectedStudentId(null);
+      loadDashboardData();
+    } catch (err) {
+      setModalError(err.message || 'Erro ao realizar matrícula.');
+      showToast(err.message, 'error');
+    }
+  };
+
+  // 4.1. Atualizar Matrícula / Contrato
+  const handleUpdateEnrollment = async (e) => {
+    e.preventDefault();
+    if (!editingEnrollment) return;
+    setModalError('');
+    const formData = new FormData(e.target);
+    const descTipo = formData.get('tipo_desconto');
+    const payload = {
+      status: formData.get('status'),
+      valor_mensalidade: parseFloat(formData.get('valor_mensalidade') || '0'),
+      desconto_percentual: parseFloat(formData.get('desconto_percentual') || '0'),
+      tipo_desconto: descTipo && descTipo !== 'nenhum' ? descTipo : null,
+      dia_vencimento: parseInt(formData.get('dia_vencimento') || '10'),
+      quantidade_parcelas: parseInt(formData.get('quantidade_parcelas') || '12'),
+      motivo_cancelamento: formData.get('motivo_cancelamento') || null,
+      contrato_assinado: formData.get('contrato_assinado') === 'on',
+      observacoes: formData.get('observacoes') || null,
+    };
+
+    try {
+      await api.updateEnrollment(editingEnrollment.id, payload);
+      showToast('Matrícula atualizada com sucesso!');
+      setEditingEnrollment(null);
+      loadDashboardData();
+    } catch (err) {
+      setModalError(err.message || 'Erro ao atualizar matrícula.');
+      showToast(err.message, 'error');
+    }
+  };
+
+  // 4.2. Usuários: Criar / Editar Usuário e RBAC
+  const handleSaveUser = async (e) => {
+    e.preventDefault();
+    setModalError('');
+    const formData = new FormData(e.target);
+    const profIdVal = formData.get('professor_id');
+    const roleVal = formData.get('role');
+    const payload = {
+      nome: formData.get('nome'),
+      email: formData.get('email'),
+      role: roleVal,
+      professor_id: roleVal === 'Professor' && profIdVal ? parseInt(profIdVal) : null,
+      ativo: formData.get('ativo') === 'on',
+    };
+    const senhaVal = formData.get('senha');
+    if (senhaVal && senhaVal.trim()) {
+      payload.senha = senhaVal.trim();
+    }
+
+    try {
+      if (editingUser) {
+        await api.updateUser(editingUser.id, payload);
+        showToast('Usuário atualizado com sucesso!');
+        setEditingUser(null);
+      } else {
+        await api.createUser(payload);
+        showToast('Usuário criado com sucesso!');
+      }
+      setShowUserModal(false);
+      loadDashboardData();
+    } catch (err) {
+      setModalError(err.message || 'Erro ao salvar usuário.');
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleToggleUserStatus = async (usr) => {
+    try {
+      await api.updateUser(usr.id, { ativo: !usr.ativo });
+      showToast(`Usuário ${usr.ativo ? 'desativado' : 'ativado'} com sucesso!`);
       loadDashboardData();
     } catch (err) {
       showToast(err.message, 'error');
@@ -474,6 +623,7 @@ export default function App() {
   // 7. Quitar Mensalidade
   const handlePayInvoice = async () => {
     if (!showPayModal) return;
+    setModalError('');
     try {
       await api.payInvoice(showPayModal.id, {
         valor_pago: parseFloat(payValue || showPayModal.valor_final),
@@ -483,6 +633,7 @@ export default function App() {
       setShowPayModal(null);
       loadDashboardData();
     } catch (err) {
+      setModalError(err.message || 'Erro ao registrar pagamento.');
       showToast(err.message, 'error');
     }
   };
@@ -529,13 +680,20 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden font-['Plus_Jakarta_Sans',sans-serif]">
-      {/* Toast Notification */}
+      {/* Toast Notification - Z-Index 9999 para ficar visível à frente de qualquer modal ou blur */}
       {toast && (
-        <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 text-sm font-medium ${
-          toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'
+        <div className={`fixed top-6 right-6 z-[9999] max-w-md px-5 py-4 rounded-xl shadow-2xl flex items-center justify-between gap-3 text-sm font-semibold border ${
+          toast.type === 'error'
+            ? 'bg-red-600 text-white border-red-700 ring-4 ring-red-600/20'
+            : 'bg-emerald-600 text-white border-emerald-700 ring-4 ring-emerald-600/20'
         }`}>
-          {toast.type === 'error' ? <AlertTriangle className="w-5 h-5 shrink-0" /> : <CheckCircle className="w-5 h-5 shrink-0" />}
-          <span>{toast.message}</span>
+          <div className="flex items-center gap-3">
+            {toast.type === 'error' ? <AlertTriangle className="w-5 h-5 shrink-0" /> : <CheckCircle className="w-5 h-5 shrink-0" />}
+            <span>{toast.message}</span>
+          </div>
+          <button onClick={() => setToast(null)} className="p-1 hover:bg-white/20 rounded">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
@@ -578,15 +736,24 @@ export default function App() {
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
           {[
             { id: 'dashboard', label: 'Painel Geral', icon: TrendingUp },
-            { id: 'students', label: 'Alunos & Responsáveis', icon: Users },
-            { id: 'courses', label: 'Cursos & Modalidades', icon: BookOpen },
-            { id: 'teachers', label: 'Professores & Docentes', icon: Briefcase },
-            { id: 'enrollments', label: 'Matrículas & Contratos', icon: GraduationCap },
-            { id: 'classes', label: 'Turmas & Horários', icon: Calendar },
-            { id: 'rooms', label: 'Salas & Capacidade (9)', icon: Palette },
-            { id: 'financial', label: 'Financeiro & DRE', icon: DollarSign },
+            { id: 'students', label: isProfessor ? 'Meus Alunos' : 'Alunos & Responsáveis', icon: Users },
+            ...(!isProfessor ? [
+              { id: 'courses', label: 'Cursos & Modalidades', icon: BookOpen },
+              { id: 'teachers', label: 'Professores & Docentes', icon: Briefcase },
+              { id: 'enrollments', label: 'Matrículas & Contratos', icon: GraduationCap },
+            ] : []),
+            { id: 'classes', label: isProfessor ? 'Minhas Turmas' : 'Turmas & Horários', icon: Calendar },
+            ...(!isProfessor ? [
+              { id: 'rooms', label: 'Salas & Capacidade (9)', icon: Palette },
+              { id: 'financial', label: 'Financeiro & DRE', icon: DollarSign },
+            ] : []),
             { id: 'attendance', label: 'Frequência & Diário', icon: Clock },
-            { id: 'backups', label: 'Backups do Sistema', icon: HardDrive },
+            ...(!isProfessor ? [
+              { id: 'backups', label: 'Backups do Sistema', icon: HardDrive },
+            ] : []),
+            ...(isAdminOrCoord ? [
+              { id: 'users', label: 'Usuários & Acessos', icon: UserCheck },
+            ] : []),
           ].map((item) => {
             const Icon = item.icon;
             const active = activeTab === item.id;
@@ -648,15 +815,16 @@ export default function App() {
             <div className="min-w-0">
               <h1 className="text-base sm:text-lg md:text-xl font-bold text-slate-800 truncate">
                 {activeTab === 'dashboard' && 'Painel Geral de Indicadores'}
-                {activeTab === 'students' && 'Gestão de Alunos e Responsáveis'}
+                {activeTab === 'students' && (isProfessor ? 'Meus Alunos' : 'Gestão de Alunos e Responsáveis')}
                 {activeTab === 'courses' && 'Catálogo de Cursos & Modalidades'}
                 {activeTab === 'teachers' && 'Corpo Docente e Professores'}
                 {activeTab === 'enrollments' && 'Matrículas & Contratos'}
-                {activeTab === 'classes' && 'Turmas e Capacidade Máxima'}
+                {activeTab === 'classes' && (isProfessor ? 'Minhas Turmas Atribuídas' : 'Turmas e Capacidade Máxima')}
                 {activeTab === 'rooms' && 'Estúdios Físicos (Teto de 9 Alunos)'}
                 {activeTab === 'financial' && 'Gestão Financeira & DRE'}
-                {activeTab === 'attendance' && 'Diário de Classe & Presença'}
+                {activeTab === 'attendance' && 'Diário de Classe & Frequência'}
                 {activeTab === 'backups' && 'Segurança & Backup Local SQLite'}
+                {activeTab === 'users' && 'Gestão de Usuários & Perfis de Acesso'}
               </h1>
               <p className="text-xs text-slate-500 hidden sm:block">Unidade Nova Odessa/SP • Porta 8080 • Servidor Local</p>
             </div>
@@ -807,7 +975,11 @@ export default function App() {
                     <Download className="w-3.5 h-3.5" /> Exportar CSV
                   </a>
                   <button
-                    onClick={() => setShowStudentModal(true)}
+                    onClick={() => {
+                      setEditingStudent(null);
+                      setModalError('');
+                      setShowStudentModal(true);
+                    }}
                     className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow"
                   >
                     <Plus className="w-3.5 h-3.5" /> Novo Aluno
@@ -874,10 +1046,22 @@ export default function App() {
                               <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-100 text-slate-600">Não autorizou</span>
                             )}
                           </td>
-                          <td className="px-6 py-4 text-right">
+                          <td className="px-6 py-4 text-right space-x-1 whitespace-nowrap">
+                            <button
+                              onClick={() => {
+                                setEditingStudent(st);
+                                setModalError('');
+                                setShowStudentModal(true);
+                              }}
+                              className="p-1.5 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition inline-flex items-center"
+                              title="Editar dados do aluno e responsável"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => {
                                 setPreselectedStudentId(st.id);
+                                setModalError('');
                                 setShowEnrollmentModal(true);
                               }}
                               className="px-3 py-1.5 text-xs font-semibold bg-amber-700 hover:bg-amber-800 text-white rounded-lg transition inline-flex items-center gap-1 shadow-sm"
@@ -1090,6 +1274,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setPreselectedStudentId(null);
+                    setModalError('');
                     setShowEnrollmentModal(true);
                   }}
                   className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
@@ -1130,8 +1315,11 @@ export default function App() {
                           <span className="font-bold text-slate-800 block">
                             R$ {(enr.valor_com_desconto || enr.valor_mensalidade).toFixed(2)}
                           </span>
+                          <span className="text-[11px] text-slate-500 block">
+                            Dia {enr.dia_vencimento || 10} • {enr.quantidade_parcelas || 12}x
+                          </span>
                           {enr.desconto_percentual > 0 && (
-                            <span className="text-[11px] text-emerald-600">
+                            <span className="text-[11px] text-emerald-600 block">
                               {enr.desconto_percentual}% off ({enr.tipo_desconto})
                             </span>
                           )}
@@ -1143,8 +1331,23 @@ export default function App() {
                           }`}>
                             {enr.status}
                           </span>
+                          {enr.contrato_assinado ? (
+                            <span className="block text-[10px] text-emerald-600 mt-0.5 font-medium">Contrato assinado</span>
+                          ) : (
+                            <span className="block text-[10px] text-amber-600 mt-0.5 font-medium">Aguardando ass.</span>
+                          )}
                         </td>
-                        <td className="px-6 py-4 text-right">
+                        <td className="px-6 py-4 text-right space-x-1 whitespace-nowrap">
+                          <button
+                            onClick={() => {
+                              setEditingEnrollment(enr);
+                              setModalError('');
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition inline-flex items-center"
+                            title="Editar dados da matrícula e contrato"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
                           <button
                             onClick={() => handleSendWelcomeWhatsApp(enr.id)}
                             className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition inline-flex items-center gap-1 shadow-sm"
@@ -1330,7 +1533,7 @@ export default function App() {
                 <div className="p-4 sm:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="font-bold text-slate-800 text-lg">Mensalidades e Títulos Financeiros</h3>
-                    <p className="text-xs text-slate-500">Formas homologadas: PIX, Cartão, Boleto e Dinheiro.</p>
+                    <p className="text-xs text-slate-500">Formas homologadas: PIX, Cartão, Boleto e Dinheiro. Receba mensalidades com baixa imediata.</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <a
@@ -1342,12 +1545,48 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Filtros rápidos e busca */}
+                <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { id: 'TODAS', label: `Todas (${invoices.length})` },
+                      { id: 'PENDENTE', label: `Pendentes (${invoices.filter(i => i.status === 'PENDENTE').length})` },
+                      { id: 'ATRASADO', label: `Vencidas (${invoices.filter(i => i.status === 'ATRASADO').length})` },
+                      { id: 'PAGO', label: `Pagas (${invoices.filter(i => i.status === 'PAGO').length})` },
+                    ].map(f => (
+                      <button
+                        key={f.id}
+                        type="button"
+                        onClick={() => setInvoiceFilter(f.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                          invoiceFilter === f.id
+                            ? 'bg-amber-700 text-white shadow-sm'
+                            : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={invoiceSearch}
+                      onChange={(e) => setInvoiceSearch(e.target.value)}
+                      placeholder="Buscar aluno ou descrição..."
+                      className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-sm text-slate-600">
                     <thead className="bg-slate-50 text-slate-500 text-xs uppercase font-semibold border-b border-slate-200">
                       <tr>
-                        <th className="px-6 py-3">Descrição</th>
-                        <th className="px-6 py-3">Aluno</th>
+                        <th className="px-6 py-3">Descrição / Parcela</th>
+                        <th className="px-6 py-3">Aluno & Responsável</th>
                         <th className="px-6 py-3">Vencimento</th>
                         <th className="px-6 py-3">Valor</th>
                         <th className="px-6 py-3">Status</th>
@@ -1355,18 +1594,46 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {invoices.map((inv) => (
+                      {invoices
+                        .filter(inv => {
+                          if (invoiceFilter !== 'TODAS' && inv.status !== invoiceFilter) return false;
+                          if (invoiceSearch.trim()) {
+                            const q = invoiceSearch.toLowerCase();
+                            const matchAluno = inv.aluno_nome?.toLowerCase().includes(q);
+                            const matchDesc = inv.descricao?.toLowerCase().includes(q);
+                            if (!matchAluno && !matchDesc) return false;
+                          }
+                          return true;
+                        })
+                        .map((inv) => (
                         <tr key={inv.id} className="hover:bg-slate-50/80 transition">
-                          <td className="px-6 py-4 font-medium text-slate-900">{inv.descricao}</td>
-                          <td className="px-6 py-4">{inv.aluno_nome || 'Aluno'}</td>
-                          <td className="px-6 py-4">{new Date(inv.data_vencimento).toLocaleDateString('pt-BR')}</td>
-                          <td className="px-6 py-4 font-bold text-slate-800">R$ {inv.valor_final.toFixed(2)}</td>
+                          <td className="px-6 py-4 font-medium text-slate-900">
+                            <div>{inv.descricao}</div>
+                            <span className="text-[11px] text-slate-400">Competência: {inv.competencia}</span>
+                          </td>
                           <td className="px-6 py-4">
-                            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                            <span className="font-medium text-slate-800 block">{inv.aluno_nome || 'Aluno'}</span>
+                            {inv.responsavel_nome && (
+                              <span className="text-[11px] text-slate-400 block">Resp: {inv.responsavel_nome}</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-xs">
+                            <span className={inv.status === 'ATRASADO' ? 'text-red-600 font-bold' : ''}>
+                              {new Date(inv.data_vencimento).toLocaleDateString('pt-BR')}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className="font-bold text-slate-800 block">R$ {inv.valor_final.toFixed(2)}</span>
+                            {inv.desconto_aplicado > 0 && (
+                              <span className="text-[11px] text-emerald-600 block">Desc: R$ {inv.desconto_aplicado.toFixed(2)}</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
                               inv.status === 'PAGO' ? 'bg-emerald-100 text-emerald-800' :
                               inv.status === 'ATRASADO' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
                             }`}>
-                              {inv.status}
+                              {inv.status === 'PAGO' ? '✓ PAGO' : inv.status === 'ATRASADO' ? '⚠ VENCIDO' : '⏳ PENDENTE'}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
@@ -1375,13 +1642,17 @@ export default function App() {
                                 onClick={() => {
                                   setShowPayModal(inv);
                                   setPayValue(inv.valor_final);
+                                  setModalError('');
                                 }}
-                                className="px-3 py-1.5 text-xs font-semibold bg-amber-700 hover:bg-amber-800 text-white rounded-lg transition"
+                                className="px-3.5 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition inline-flex items-center gap-1 shadow-sm"
+                                title="Receber mensalidade e dar baixa"
                               >
-                                Baixa
+                                <CreditCard className="w-3.5 h-3.5" /> Receber / Baixa
                               </button>
                             ) : (
-                              <span className="text-xs text-slate-400">Liquidado ({inv.forma_pagamento})</span>
+                              <span className="text-xs text-emerald-700 font-medium inline-flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" /> Pago ({inv.forma_pagamento || 'OK'})
+                              </span>
                             )}
                           </td>
                         </tr>
@@ -1396,142 +1667,354 @@ export default function App() {
           {/* TAB 9: FREQUÊNCIA & DIÁRIO DE CLASSE */}
           {activeTab === 'attendance' && (
             <div className="space-y-6">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                <h3 className="font-bold text-slate-800 text-lg">Diário de Classe & Chamada Semanal</h3>
-                <p className="text-xs text-slate-500">Selecione uma turma para registrar o tema trabalhado e a presença dos alunos matriculados.</p>
+              {/* Sub-navegação da Frequência */}
+              <div className="flex border-b border-slate-200 gap-2 overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setAttendanceSubTab('chamada')}
+                  className={`pb-3 px-4 text-xs font-bold transition border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+                    attendanceSubTab === 'chamada'
+                      ? 'border-amber-700 text-amber-900'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <Calendar className="w-4 h-4" /> Lançar Diário & Presença
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAttendanceSubTab('turmas')}
+                  className={`pb-3 px-4 text-xs font-bold transition border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+                    attendanceSubTab === 'turmas'
+                      ? 'border-amber-700 text-amber-900'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <BarChart2 className="w-4 h-4" /> Relatório Geral por Turmas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAttendanceSubTab('aluno')}
+                  className={`pb-3 px-4 text-xs font-bold transition border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+                    attendanceSubTab === 'aluno'
+                      ? 'border-amber-700 text-amber-900'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <Users className="w-4 h-4" /> Frequência por Aluno
+                </button>
+              </div>
 
-                <form onSubmit={handleSaveAttendance} className="mt-6 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Selecione a Turma</label>
+              {/* Sub-tab 1: Lançar Diário & Presença */}
+              {attendanceSubTab === 'chamada' && (
+                <>
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                    <h3 className="font-bold text-slate-800 text-lg">Diário de Classe & Chamada Semanal</h3>
+                    <p className="text-xs text-slate-500">Selecione uma turma para registrar o tema trabalhado e a presença dos alunos matriculados.</p>
+
+                    <form onSubmit={handleSaveAttendance} className="mt-6 space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 mb-1">Selecione a Turma</label>
+                          <select
+                            value={selectedClassForAttendance}
+                            onChange={(e) => setSelectedClassForAttendance(e.target.value)}
+                            required
+                            className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                          >
+                            <option value="">-- Escolha uma turma ativa --</option>
+                            {classes.map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.nome} ({c.dia_semana} • {c.horario_inicio}-{c.horario_fim})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 mb-1">Data da Aula</label>
+                          <input
+                            type="date"
+                            value={attendanceDate}
+                            onChange={(e) => setAttendanceDate(e.target.value)}
+                            required
+                            className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 mb-1">Tema da Aula / Assunto</label>
+                          <input
+                            type="text"
+                            value={lessonTopic}
+                            onChange={(e) => setLessonTopic(e.target.value)}
+                            placeholder="Ex: Introdução a luz e sombra com grafite 6B"
+                            required
+                            className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-600 mb-1">Materiais Utilizados</label>
+                          <input
+                            type="text"
+                            value={lessonMaterials}
+                            onChange={(e) => setLessonMaterials(e.target.value)}
+                            placeholder="Ex: Papel Canson 200g, carvão e esfuminho"
+                            className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Conteúdo Programático e Observações</label>
+                        <textarea
+                          value={lessonContent}
+                          onChange={(e) => setLessonContent(e.target.value)}
+                          rows="2"
+                          placeholder="Exercícios práticos desenvolvidos pelos alunos..."
+                          className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                        ></textarea>
+                      </div>
+
+                      {/* Lista de Chamada Interativa */}
+                      {selectedClassForAttendance && (
+                        <div className="mt-6 pt-4 border-t border-slate-200">
+                          <h4 className="font-bold text-slate-800 text-sm mb-3">
+                            Lista de Chamada dos Alunos Matriculados:
+                          </h4>
+
+                          {enrollments.filter(e => e.turma_id === parseInt(selectedClassForAttendance) && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL')).length > 0 ? (
+                            <div className="space-y-2">
+                              {enrollments.filter(e => e.turma_id === parseInt(selectedClassForAttendance) && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL')).map((enr) => {
+                                const currentStatus = attendanceRecords[enr.aluno_id] || 'PRESENTE';
+                                return (
+                                  <div key={enr.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50">
+                                    <span className="font-medium text-slate-800 text-sm">{enr.aluno_nome}</span>
+                                    <div className="flex gap-2">
+                                      {['PRESENTE', 'FALTA', 'JUSTIFICADA'].map(st => (
+                                        <button
+                                          type="button"
+                                          key={st}
+                                          onClick={() => setAttendanceRecords({ ...attendanceRecords, [enr.aluno_id]: st })}
+                                          className={`px-3 py-1 rounded text-xs font-semibold transition ${
+                                            currentStatus === st
+                                              ? (st === 'PRESENTE' ? 'bg-emerald-600 text-white' : st === 'FALTA' ? 'bg-red-600 text-white' : 'bg-amber-600 text-white')
+                                              : 'bg-white border text-slate-600 hover:bg-slate-100'
+                                          }`}
+                                        >
+                                          {st}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-slate-400 italic">Não há alunos matriculados nesta turma no momento.</p>
+                          )}
+
+                          <div className="flex justify-end mt-4">
+                            <button
+                              type="submit"
+                              className="px-5 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow"
+                            >
+                              Salvar Diário e Frequência
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </form>
+                  </div>
+
+                  {/* Histórico de Aulas */}
+                  {classLessonsHistory.length > 0 && (
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                      <h4 className="font-bold text-slate-800 text-sm mb-4">Aulas Registradas Anteriormente</h4>
+                      <div className="space-y-3">
+                        {classLessonsHistory.map(l => (
+                          <div key={l.id} className="p-3 rounded-lg border border-slate-100 bg-slate-50 flex justify-between items-center text-xs">
+                            <div>
+                              <strong className="text-slate-800 block text-sm">{l.tema_aula}</strong>
+                              <span className="text-slate-500">Data: {new Date(l.data_aula).toLocaleDateString('pt-BR')} • {l.materiais_utilizados || 'Sem materiais'}</span>
+                            </div>
+                            <span className="px-2 py-1 rounded bg-slate-200 text-slate-700 font-semibold">Registrada</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Sub-tab 2: Visão Geral por Turmas */}
+              {attendanceSubTab === 'turmas' && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Visão Geral de Presenças por Turma</h3>
+                    <p className="text-xs text-slate-500">Métricas de frequência acumuladas e taxa de engajamento dos alunos por modalidade.</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-600">
+                      <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 border-y border-slate-100">
+                        <tr>
+                          <th className="px-4 py-3">Turma / Modalidade</th>
+                          <th className="px-4 py-3">Professor</th>
+                          <th className="px-4 py-3">Horário</th>
+                          <th className="px-4 py-3 text-center">Matriculados</th>
+                          <th className="px-4 py-3 text-center">Aulas Registradas</th>
+                          <th className="px-4 py-3 text-center">Presenças</th>
+                          <th className="px-4 py-3 text-center">Faltas</th>
+                          <th className="px-4 py-3">Taxa de Presença</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {attendanceClassesSummary.length === 0 ? (
+                          <tr>
+                            <td colSpan="8" className="px-4 py-6 text-center text-slate-400">Nenhum registro de aula computado ainda.</td>
+                          </tr>
+                        ) : (
+                          attendanceClassesSummary.map((item) => (
+                            <tr key={item.turma_id} className="hover:bg-slate-50">
+                              <td className="px-4 py-3 font-semibold text-slate-800">
+                                <div>{item.turma_nome}</div>
+                                <span className="text-[11px] text-slate-400 font-normal">{item.curso_nome}</span>
+                              </td>
+                              <td className="px-4 py-3">{item.professor_nome}</td>
+                              <td className="px-4 py-3">{item.dia_semana} • {item.horario}</td>
+                              <td className="px-4 py-3 text-center">
+                                <span className="font-semibold text-slate-700">{item.total_matriculados}</span> / {item.capacidade_maxima}
+                              </td>
+                              <td className="px-4 py-3 text-center font-bold text-slate-700">{item.total_aulas_registradas}</td>
+                              <td className="px-4 py-3 text-center text-emerald-700 font-semibold">{item.total_presencas}</td>
+                              <td className="px-4 py-3 text-center text-red-600 font-semibold">{item.total_faltas}</td>
+                              <td className="px-4 py-3 min-w-[150px]">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 bg-slate-100 rounded-full h-2 overflow-hidden">
+                                    <div
+                                      className={`h-2 rounded-full ${
+                                        item.taxa_presenca_percentual >= 75
+                                          ? 'bg-emerald-500'
+                                          : item.taxa_presenca_percentual >= 50
+                                          ? 'bg-amber-500'
+                                          : 'bg-red-500'
+                                      }`}
+                                      style={{ width: `${Math.min(100, item.taxa_presenca_percentual)}%` }}
+                                    ></div>
+                                  </div>
+                                  <span className="font-bold text-xs text-slate-700 min-w-[42px] text-right">
+                                    {item.taxa_presenca_percentual}%
+                                  </span>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Sub-tab 3: Frequência por Aluno */}
+              {attendanceSubTab === 'aluno' && (
+                <div className="space-y-6">
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                    <h3 className="font-bold text-slate-800 text-lg mb-1">Histórico Individual de Presenças</h3>
+                    <p className="text-xs text-slate-500 mb-4">Consulte o histórico detalhado de chamadas, ausências justificadas e taxa de frequência de qualquer aluno.</p>
+                    <div className="max-w-md">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Selecione o Aluno</label>
                       <select
-                        value={selectedClassForAttendance}
-                        onChange={(e) => setSelectedClassForAttendance(e.target.value)}
-                        required
+                        value={selectedStudentForHistory}
+                        onChange={(e) => setSelectedStudentForHistory(e.target.value)}
                         className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
                       >
-                        <option value="">-- Escolha uma turma ativa --</option>
-                        {classes.map(c => (
-                          <option key={c.id} value={c.id}>
-                            {c.nome} ({c.dia_semana} • {c.horario_inicio}-{c.horario_fim})
+                        <option value="">-- Escolha um aluno para analisar --</option>
+                        {students.map((st) => (
+                          <option key={st.id} value={st.id}>
+                            {st.nome}
                           </option>
                         ))}
                       </select>
                     </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Data da Aula</label>
-                      <input
-                        type="date"
-                        value={attendanceDate}
-                        onChange={(e) => setAttendanceDate(e.target.value)}
-                        required
-                        className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
-                      />
-                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Tema da Aula / Assunto</label>
-                      <input
-                        type="text"
-                        value={lessonTopic}
-                        onChange={(e) => setLessonTopic(e.target.value)}
-                        placeholder="Ex: Introdução a luz e sombra com grafite 6B"
-                        required
-                        className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-600 mb-1">Materiais Utilizados</label>
-                      <input
-                        type="text"
-                        value={lessonMaterials}
-                        onChange={(e) => setLessonMaterials(e.target.value)}
-                        placeholder="Ex: Papel Canson 200g, carvão e esfuminho"
-                        className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-600 mb-1">Conteúdo Programático e Observações</label>
-                    <textarea
-                      value={lessonContent}
-                      onChange={(e) => setLessonContent(e.target.value)}
-                      rows="2"
-                      placeholder="Exercícios práticos desenvolvidos pelos alunos..."
-                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
-                    ></textarea>
-                  </div>
-
-                  {/* Lista de Chamada Interativa */}
-                  {selectedClassForAttendance && (
-                    <div className="mt-6 pt-4 border-t border-slate-200">
-                      <h4 className="font-bold text-slate-800 text-sm mb-3">
-                        Lista de Chamada dos Alunos Matriculados:
-                      </h4>
-
-                      {enrollments.filter(e => e.turma_id === parseInt(selectedClassForAttendance) && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL')).length > 0 ? (
-                        <div className="space-y-2">
-                          {enrollments.filter(e => e.turma_id === parseInt(selectedClassForAttendance) && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL')).map((enr) => {
-                            const currentStatus = attendanceRecords[enr.aluno_id] || 'PRESENTE';
-                            return (
-                              <div key={enr.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-100 bg-slate-50">
-                                <span className="font-medium text-slate-800 text-sm">{enr.aluno_nome}</span>
-                                <div className="flex gap-2">
-                                  {['PRESENTE', 'FALTA', 'JUSTIFICADA'].map(st => (
-                                    <button
-                                      type="button"
-                                      key={st}
-                                      onClick={() => setAttendanceRecords({ ...attendanceRecords, [enr.aluno_id]: st })}
-                                      className={`px-3 py-1 rounded text-xs font-semibold transition ${
-                                        currentStatus === st
-                                          ? (st === 'PRESENTE' ? 'bg-emerald-600 text-white' : st === 'FALTA' ? 'bg-red-600 text-white' : 'bg-amber-600 text-white')
-                                          : 'bg-white border text-slate-600 hover:bg-slate-100'
-                                      }`}
-                                    >
-                                      {st}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })}
+                  {studentAttendanceHistory && (
+                    <div className="space-y-6">
+                      {/* Cartões de Métricas do Aluno */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                          <span className="text-xs text-slate-400 block font-medium">Total de Aulas</span>
+                          <span className="text-2xl font-bold text-slate-800 mt-1 block">{studentAttendanceHistory.total_aulas}</span>
                         </div>
-                      ) : (
-                        <p className="text-xs text-slate-400 italic">Não há alunos matriculados nesta turma no momento.</p>
-                      )}
+                        <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-200/60 shadow-sm">
+                          <span className="text-xs text-emerald-800 block font-medium">Presenças</span>
+                          <span className="text-2xl font-bold text-emerald-900 mt-1 block">{studentAttendanceHistory.total_presencas}</span>
+                        </div>
+                        <div className="bg-red-50/70 p-4 rounded-xl border border-red-200/60 shadow-sm">
+                          <span className="text-xs text-red-800 block font-medium">Faltas</span>
+                          <span className="text-2xl font-bold text-red-900 mt-1 block">{studentAttendanceHistory.total_faltas}</span>
+                          {studentAttendanceHistory.total_faltas_justificadas > 0 && (
+                            <span className="text-[11px] text-amber-700 font-medium">
+                              ({studentAttendanceHistory.total_faltas_justificadas} justificadas)
+                            </span>
+                          )}
+                        </div>
+                        <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200/60 shadow-sm">
+                          <span className="text-xs text-amber-800 block font-medium">Taxa de Frequência</span>
+                          <span className="text-2xl font-bold text-amber-900 mt-1 block">{studentAttendanceHistory.taxa_presenca_percentual}%</span>
+                        </div>
+                      </div>
 
-                      <div className="flex justify-end mt-4">
-                        <button
-                          type="submit"
-                          className="px-5 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow"
-                        >
-                          Salvar Diário e Frequência
-                        </button>
+                      {/* Lista cronológica de aulas do aluno */}
+                      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+                        <h4 className="font-bold text-slate-800 text-sm mb-4">Registro de Frequência em Aulas</h4>
+                        {studentAttendanceHistory.historico.length === 0 ? (
+                          <p className="text-xs text-slate-400 italic">Nenhum registro de chamada encontrado para este aluno.</p>
+                        ) : (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs text-slate-600">
+                              <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 border-y border-slate-100">
+                                <tr>
+                                  <th className="px-4 py-3">Data</th>
+                                  <th className="px-4 py-3">Turma</th>
+                                  <th className="px-4 py-3">Tema da Aula</th>
+                                  <th className="px-4 py-3">Status</th>
+                                  <th className="px-4 py-3">Observações</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {studentAttendanceHistory.historico.map((rec, idx) => (
+                                  <tr key={idx} className="hover:bg-slate-50">
+                                    <td className="px-4 py-3 whitespace-nowrap font-medium text-slate-800">
+                                      {new Date(rec.data_aula).toLocaleDateString('pt-BR')}
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap">{rec.turma_nome}</td>
+                                    <td className="px-4 py-3 font-medium text-slate-700">{rec.tema_aula || '—'}</td>
+                                    <td className="px-4 py-3 whitespace-nowrap">
+                                      <span
+                                        className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                          rec.status === 'PRESENTE'
+                                            ? 'bg-emerald-100 text-emerald-800'
+                                            : rec.status === 'JUSTIFICADA'
+                                            ? 'bg-amber-100 text-amber-800'
+                                            : 'bg-red-100 text-red-800'
+                                        }`}
+                                      >
+                                        {rec.status}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-slate-500">{rec.observacao || '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
-                </form>
-              </div>
-
-              {/* Histórico de Aulas */}
-              {classLessonsHistory.length > 0 && (
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                  <h4 className="font-bold text-slate-800 text-sm mb-4">Aulas Registradas Anteriormente</h4>
-                  <div className="space-y-3">
-                    {classLessonsHistory.map(l => (
-                      <div key={l.id} className="p-3 rounded-lg border border-slate-100 bg-slate-50 flex justify-between items-center text-xs">
-                        <div>
-                          <strong className="text-slate-800 block text-sm">{l.tema_aula}</strong>
-                          <span className="text-slate-500">Data: {new Date(l.data_aula).toLocaleDateString('pt-BR')} • {l.materiais_utilizados || 'Sem materiais'}</span>
-                        </div>
-                        <span className="px-2 py-1 rounded bg-slate-200 text-slate-700 font-semibold">Registrada</span>
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
             </div>
@@ -1577,61 +2060,297 @@ export default function App() {
             </div>
           )}
 
+          {/* TAB 11: GESTÃO DE USUÁRIOS & ACESSOS (RBAC) */}
+          {activeTab === 'users' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Usuários & Controle de Acesso (RBAC)</h3>
+                    <p className="text-xs text-slate-500">
+                      Gerencie acessos e vincule professores para que cada um acesse somente suas próprias turmas e diários.
+                    </p>
+                  </div>
+                  {isAdminOrCoord && (
+                    <button
+                      onClick={() => {
+                        setEditingUser(null);
+                        setModalError('');
+                        setShowUserModal(true);
+                      }}
+                      className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
+                    >
+                      <Plus className="w-4 h-4" /> Novo Usuário
+                    </button>
+                  )}
+                </div>
+
+                <div className="overflow-x-auto mt-4">
+                  <table className="w-full text-left text-xs text-slate-600">
+                    <thead className="bg-slate-50 text-[11px] uppercase tracking-wider text-slate-500 border-y border-slate-100">
+                      <tr>
+                        <th className="px-6 py-3">Usuário</th>
+                        <th className="px-6 py-3">Perfil de Acesso</th>
+                        <th className="px-6 py-3">Vínculo Docente</th>
+                        <th className="px-6 py-3">Status</th>
+                        <th className="px-6 py-3 text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {users.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" className="px-6 py-6 text-center text-slate-400">
+                            Nenhum usuário cadastrado.
+                          </td>
+                        </tr>
+                      ) : (
+                        users.map((usr) => {
+                          const linkedTeacher = teachers.find(t => t.id === usr.professor_id);
+                          return (
+                            <tr key={usr.id} className="hover:bg-slate-50">
+                              <td className="px-6 py-4">
+                                <div className="font-semibold text-slate-900">{usr.nome}</div>
+                                <div className="text-slate-400 text-[11px]">{usr.email}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                  usr.role === 'DIRECAO'
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : usr.role === 'COORDENACAO'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : usr.role === 'Professor'
+                                    ? 'bg-amber-100 text-amber-800'
+                                    : 'bg-emerald-100 text-emerald-800'
+                                }`}>
+                                  {usr.role === 'Professor' ? 'Professor' : usr.role}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4">
+                                {usr.role === 'Professor' ? (
+                                  linkedTeacher ? (
+                                    <span className="font-medium text-slate-700 flex items-center gap-1">
+                                      <UserCheck className="w-3.5 h-3.5 text-emerald-600" /> {linkedTeacher.nome}
+                                    </span>
+                                  ) : (
+                                    <span className="text-amber-700 text-xs italic">Não vinculado</span>
+                                  )
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </td>
+                              <td className="px-6 py-4">
+                                <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                                  usr.ativo ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                                }`}>
+                                  {usr.ativo ? 'Ativo' : 'Inativo'}
+                                </span>
+                              </td>
+                              <td className="px-6 py-4 text-right space-x-2">
+                                {isAdminOrCoord && (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setEditingUser(usr);
+                                        setModalError('');
+                                        setShowUserModal(true);
+                                      }}
+                                      className="p-1.5 text-slate-500 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition inline-flex items-center"
+                                      title="Editar Usuário"
+                                    >
+                                      <Edit className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleToggleUserStatus(usr)}
+                                      className={`px-2.5 py-1 rounded text-xs font-semibold transition ${
+                                        usr.ativo
+                                          ? 'border border-red-200 text-red-600 hover:bg-red-50'
+                                          : 'border border-emerald-200 text-emerald-700 hover:bg-emerald-50'
+                                      }`}
+                                      title={usr.ativo ? 'Desativar acesso' : 'Ativar acesso'}
+                                    >
+                                      {usr.ativo ? 'Desativar' : 'Ativar'}
+                                    </button>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       </main>
 
-      {/* MODAL: NOVO ALUNO */}
+      {/* MODAL: NOVO / EDITAR ALUNO */}
       {showStudentModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-800 text-base">Novo Aluno</h3>
-              <button onClick={() => setShowStudentModal(false)} className="text-slate-400 hover:text-slate-600">
+              <h3 className="font-bold text-slate-800 text-base">
+                {editingStudent ? 'Editar Aluno & Responsável' : 'Novo Aluno'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowStudentModal(false);
+                  setEditingStudent(null);
+                  setModalError('');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleCreateStudent} className="space-y-4 mt-4">
+            <form onSubmit={handleSaveStudent} className="space-y-4 mt-4">
+              {modalError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium">
+                  {modalError}
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Nome Completo</label>
-                <input name="nome" required className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500" />
+                <input
+                  name="nome"
+                  required
+                  defaultValue={editingStudent?.nome || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Nascimento</label>
-                  <input name="data_nascimento" type="date" required className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500" />
+                  <input
+                    name="data_nascimento"
+                    type="date"
+                    required
+                    defaultValue={editingStudent?.data_nascimento || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">CPF (Adultos)</label>
-                  <input name="cpf" placeholder="000.000.000-00" className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500" />
+                  <input
+                    name="cpf"
+                    placeholder="000.000.000-00"
+                    defaultValue={editingStudent?.cpf || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Telefone / WhatsApp</label>
+                  <input
+                    name="telefone"
+                    placeholder="(19) 9..."
+                    defaultValue={editingStudent?.telefone || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">E-mail</label>
+                  <input
+                    name="email"
+                    type="email"
+                    placeholder="aluno@email.com"
+                    defaultValue={editingStudent?.email || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
                 </div>
               </div>
               <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Endereço Residencial</label>
+                <input
+                  name="endereco"
+                  placeholder="Rua, número, bairro..."
+                  defaultValue={editingStudent?.endereco || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+              <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Alergias ou Observações de Saúde</label>
-                <input name="alergias" placeholder="Tinta acrílica, poeira..." className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500" />
+                <input
+                  name="alergias"
+                  placeholder="Tinta acrílica, poeira..."
+                  defaultValue={editingStudent?.alergias || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
               </div>
 
               {/* Seção Responsável Legal (Para menores) */}
               <div className="p-3.5 bg-amber-50/70 border border-amber-200/60 rounded-xl space-y-3">
                 <span className="text-xs font-bold text-amber-900 block">Responsável Legal & Financeiro (Obrigatório para menores)</span>
                 <div>
-                  <input name="resp_nome" placeholder="Nome do Responsável Legal" className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white" />
+                  <input
+                    name="resp_nome"
+                    placeholder="Nome do Responsável Legal"
+                    defaultValue={editingStudent?.responsavel?.nome || ''}
+                    className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white"
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <input name="resp_cpf" placeholder="CPF: 000.000.000-00" className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white" />
-                  <input name="resp_telefone" placeholder="Telefone: (19) 9..." className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white" />
+                  <input
+                    name="resp_cpf"
+                    placeholder="CPF: 000.000.000-00"
+                    defaultValue={editingStudent?.responsavel?.cpf || ''}
+                    className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white"
+                  />
+                  <input
+                    name="resp_telefone"
+                    placeholder="Telefone: (19) 9..."
+                    defaultValue={editingStudent?.responsavel?.telefone || ''}
+                    className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white"
+                  />
                 </div>
-                <input name="resp_email" placeholder="E-mail do responsável" className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white" />
-                <input name="resp_endereco" placeholder="Endereço residencial" className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white" />
+                <input
+                  name="resp_email"
+                  placeholder="E-mail do responsável"
+                  defaultValue={editingStudent?.responsavel?.email || ''}
+                  className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white"
+                />
+                <input
+                  name="resp_endereco"
+                  placeholder="Endereço residencial"
+                  defaultValue={editingStudent?.responsavel?.endereco || ''}
+                  className="w-full px-3 py-1.5 border rounded-lg text-xs bg-white"
+                />
               </div>
 
               <div className="flex items-center gap-2">
-                <input name="autorizacao_imagem" type="checkbox" id="auth_img" className="rounded text-amber-600" />
+                <input
+                  name="autorizacao_imagem"
+                  type="checkbox"
+                  id="auth_img"
+                  defaultChecked={editingStudent ? editingStudent.autorizacao_imagem : false}
+                  className="rounded text-amber-600"
+                />
                 <label htmlFor="auth_img" className="text-xs text-slate-600">Autorizo uso de imagem em redes sociais e eventos</label>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button type="button" onClick={() => setShowStudentModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
-                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">Salvar Aluno</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowStudentModal(false);
+                    setEditingStudent(null);
+                    setModalError('');
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow"
+                >
+                  {editingStudent ? 'Salvar Alterações' : 'Salvar Aluno'}
+                </button>
               </div>
             </form>
           </div>
@@ -1977,11 +2696,23 @@ export default function App() {
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-bold text-slate-800 text-base">Matricular Aluno em Curso / Turma</h3>
-              <button onClick={() => setShowEnrollmentModal(false)} className="text-slate-400 hover:text-slate-600">
+              <button
+                onClick={() => {
+                  setShowEnrollmentModal(false);
+                  setModalError('');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCreateEnrollment} className="space-y-4 mt-4">
+              {modalError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium">
+                  {modalError}
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Selecione o Aluno</label>
                 <select
@@ -2088,6 +2819,39 @@ export default function App() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dia Preferencial de Vencimento</label>
+                  <select
+                    name="dia_vencimento"
+                    defaultValue="10"
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="5">Dia 05 de cada mês</option>
+                    <option value="10">Dia 10 de cada mês (Padrão)</option>
+                    <option value="15">Dia 15 de cada mês</option>
+                    <option value="20">Dia 20 de cada mês</option>
+                    <option value="25">Dia 25 de cada mês</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Qtd. de Parcelas / Cobranças</label>
+                  <select
+                    name="quantidade_parcelas"
+                    defaultValue="12"
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
+                      <option key={n} value={n}>{n}x parcela{n > 1 ? 's' : ''} ({n} {n > 1 ? 'meses' : 'mês'})</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="p-2.5 bg-blue-50 border border-blue-200/60 rounded-lg text-xs text-blue-800">
+                💳 Ao confirmar a matrícula, o sistema gerará automaticamente todas as mensalidades do aluno no módulo Financeiro para acompanhamento e baixa de recebimento.
+              </div>
+
               <div className="flex items-center gap-2 pt-1">
                 <input name="aula_experimental" type="checkbox" id="aula_exp" className="rounded text-amber-600" />
                 <label htmlFor="aula_exp" className="text-xs text-slate-600 font-medium">É uma aula experimental / cortesia</label>
@@ -2103,8 +2867,188 @@ export default function App() {
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button type="button" onClick={() => setShowEnrollmentModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
-                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">Confirmar Matrícula</button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEnrollmentModal(false);
+                    setModalError('');
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">
+                  Confirmar Matrícula & Gerar Faturas
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDITAR MATRÍCULA & CONTRATO */}
+      {editingEnrollment && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">Editar Matrícula #{editingEnrollment.id}</h3>
+              <button
+                onClick={() => {
+                  setEditingEnrollment(null);
+                  setModalError('');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateEnrollment} className="space-y-4 mt-4">
+              {modalError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium">
+                  {modalError}
+                </div>
+              )}
+
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs">
+                <div><span className="font-semibold text-slate-700">Aluno:</span> {editingEnrollment.aluno_nome}</div>
+                <div><span className="font-semibold text-slate-700">Turma:</span> {editingEnrollment.turma_nome}</div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Status da Matrícula</label>
+                  <select
+                    name="status"
+                    defaultValue={editingEnrollment.status}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="ATIVA">ATIVA</option>
+                    <option value="EXPERIMENTAL">EXPERIMENTAL</option>
+                    <option value="TRANCADA">TRANCADA</option>
+                    <option value="CONCLUIDA">CONCLUIDA</option>
+                    <option value="CANCELADA">CANCELADA</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Valor Mensalidade (R$)</label>
+                  <input
+                    name="valor_mensalidade"
+                    type="number"
+                    step="0.01"
+                    defaultValue={editingEnrollment.valor_mensalidade}
+                    required
+                    className="w-full px-3 py-2 border rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Tipo de Desconto</label>
+                  <select
+                    name="tipo_desconto"
+                    defaultValue={editingEnrollment.tipo_desconto || 'nenhum'}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="nenhum">Nenhum</option>
+                    <option value="irmao">Irmão (Família)</option>
+                    <option value="indicacao">Indicação</option>
+                    <option value="bolsa">Bolsa</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Desconto (%)</label>
+                  <input
+                    name="desconto_percentual"
+                    type="number"
+                    defaultValue={editingEnrollment.desconto_percentual || 0}
+                    min="0"
+                    max="100"
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dia do Vencimento</label>
+                  <select
+                    name="dia_vencimento"
+                    defaultValue={editingEnrollment.dia_vencimento || 10}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="5">Dia 05</option>
+                    <option value="10">Dia 10</option>
+                    <option value="15">Dia 15</option>
+                    <option value="20">Dia 20</option>
+                    <option value="25">Dia 25</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Quantidade de Parcelas</label>
+                  <select
+                    name="quantidade_parcelas"
+                    defaultValue={editingEnrollment.quantidade_parcelas || 12}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
+                      <option key={n} value={n}>{n}x</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  name="contrato_assinado"
+                  type="checkbox"
+                  id="edit_enr_contrato"
+                  defaultChecked={editingEnrollment.contrato_assinado}
+                  className="rounded text-amber-600"
+                />
+                <label htmlFor="edit_enr_contrato" className="text-xs text-slate-700 font-medium">
+                  Contrato de Prestação de Serviços Assinado
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Motivo do Cancelamento (se aplicável)</label>
+                <input
+                  name="motivo_cancelamento"
+                  defaultValue={editingEnrollment.motivo_cancelamento || ''}
+                  placeholder="Ex: Mudança de cidade, incompatibilidade de horário..."
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Observações Internas</label>
+                <textarea
+                  name="observacoes"
+                  rows="2"
+                  defaultValue={editingEnrollment.observacoes || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                ></textarea>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingEnrollment(null);
+                    setModalError('');
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow"
+                >
+                  Salvar Alterações
+                </button>
               </div>
             </form>
           </div>
@@ -2261,8 +3205,25 @@ export default function App() {
       {showPayModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100">
-            <h3 className="font-bold text-slate-800 text-base mb-1">Baixa de Pagamento</h3>
-            <p className="text-xs text-slate-500 mb-4">{showPayModal.descricao}</p>
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">Baixa de Pagamento</h3>
+              <button
+                onClick={() => {
+                  setShowPayModal(null);
+                  setModalError('');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mb-3">{showPayModal.descricao}</p>
+
+            {modalError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium mb-3">
+                {modalError}
+              </div>
+            )}
 
             <div className="space-y-3">
               <div>
@@ -2291,11 +3252,158 @@ export default function App() {
             </div>
 
             <div className="flex justify-end gap-2 mt-6">
-              <button onClick={() => setShowPayModal(null)} className="px-3.5 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
+              <button
+                onClick={() => {
+                  setShowPayModal(null);
+                  setModalError('');
+                }}
+                className="px-3.5 py-2 text-xs font-semibold text-slate-600"
+              >
+                Cancelar
+              </button>
               <button onClick={handlePayInvoice} className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow">
                 Confirmar Recebimento
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CRIAR / EDITAR USUÁRIO (RBAC) */}
+      {showUserModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">
+                {editingUser ? 'Editar Usuário' : 'Novo Usuário do Sistema'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowUserModal(false);
+                  setEditingUser(null);
+                  setModalError('');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUser} className="space-y-4 mt-4">
+              {modalError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium">
+                  {modalError}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nome Completo</label>
+                <input
+                  name="nome"
+                  required
+                  defaultValue={editingUser?.nome || ''}
+                  placeholder="Ex: Maria Clara Santos"
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">E-mail de Login</label>
+                <input
+                  name="email"
+                  type="email"
+                  required
+                  defaultValue={editingUser?.email || ''}
+                  placeholder="usuario@hbartes.com"
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Perfil de Acesso (RBAC)</label>
+                <select
+                  name="role"
+                  defaultValue={editingUser?.role || 'Professor'}
+                  onChange={(e) => {
+                    const profDiv = document.getElementById('user_prof_select_div');
+                    if (profDiv) {
+                      profDiv.style.display = e.target.value === 'Professor' ? 'block' : 'none';
+                    }
+                  }}
+                  className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                >
+                  <option value="Professor">Professor (Acesso restrito às suas turmas)</option>
+                  <option value="RECEPCAO">Recepção (Atendimento, Alunos e Matrículas)</option>
+                  <option value="COORDENACAO">Coordenação Pedagógica (Turmas, Aulas e Alunos)</option>
+                  <option value="DIRECAO">Direção / Administrador Geral (Acesso Completo)</option>
+                </select>
+              </div>
+
+              <div id="user_prof_select_div" style={{ display: (!editingUser || editingUser?.role === 'Professor') ? 'block' : 'none' }}>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Vincular ao Cadastro de Professor</label>
+                <select
+                  name="professor_id"
+                  defaultValue={editingUser?.professor_id || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                >
+                  <option value="">-- Selecione o professor --</option>
+                  {teachers.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.nome} ({t.especialidades || 'Docente'})
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[11px] text-slate-400 mt-1 block">
+                  Permite ao professor visualizar somente as turmas que ele leciona ao fazer login.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  {editingUser ? 'Alterar Senha (opcional)' : 'Senha de Acesso'}
+                </label>
+                <input
+                  name="senha"
+                  type="password"
+                  required={!editingUser}
+                  placeholder={editingUser ? 'Deixe vazio para manter a senha atual' : 'Mínimo 6 caracteres'}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  name="ativo"
+                  type="checkbox"
+                  id="user_active_chk"
+                  defaultChecked={editingUser ? editingUser.ativo : true}
+                  className="rounded text-amber-600"
+                />
+                <label htmlFor="user_active_chk" className="text-xs text-slate-700 font-medium">
+                  Usuário Ativo (Pode realizar login)
+                </label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowUserModal(false);
+                    setEditingUser(null);
+                    setModalError('');
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow"
+                >
+                  {editingUser ? 'Salvar Alterações' : 'Criar Usuário'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

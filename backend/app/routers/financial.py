@@ -47,7 +47,7 @@ def create_invoice(
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(
-        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.SECRETARIA.value
+        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.SECRETARIA.value, UserRole.COORDENACAO.value
     ))
 ):
     mat = db.query(Matricula).filter(Matricula.id == inv_in.matricula_id).first()
@@ -167,7 +167,16 @@ def list_invoices(
     if competencia:
         query = query.filter(Invoice.competencia == competencia)
 
-    invoices = query.order_by(Invoice.data_vencimento.desc()).all()
+    invoices = query.order_by(Invoice.data_vencimento.asc()).all()
+    today = date.today()
+    status_updated = False
+    for inv in invoices:
+        if inv.status == StatusTitulo.PENDENTE.value and inv.data_vencimento < today:
+            inv.status = StatusTitulo.ATRASADO.value
+            status_updated = True
+    if status_updated:
+        db.commit()
+
     return [formatar_invoice_response(inv) for inv in invoices]
 
 
@@ -201,7 +210,7 @@ def pay_invoice(
     request: Request,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(
-        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.SECRETARIA.value
+        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.SECRETARIA.value, UserRole.COORDENACAO.value
     ))
 ):
     """
@@ -409,7 +418,7 @@ def get_dre(
 def list_defaulters(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(
-        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.SECRETARIA.value
+        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.SECRETARIA.value, UserRole.COORDENACAO.value
     ))
 ):
     """

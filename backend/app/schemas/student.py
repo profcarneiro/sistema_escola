@@ -47,6 +47,8 @@ class AlunoCreate(AlunoBase):
 
 class AlunoUpdate(BaseModel):
     nome: Optional[str] = Field(None, min_length=2, max_length=150)
+    data_nascimento: Optional[date] = None
+    cpf: Optional[str] = None
     email: Optional[str] = None
     telefone: Optional[str] = Field(None, max_length=30)
     endereco: Optional[str] = Field(None, max_length=255)

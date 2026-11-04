@@ -87,6 +87,8 @@ export const api = {
   getStudents: (params = '') => request(`/students/?${params}`),
   getStudent: (id) => request(`/students/${id}`),
   createStudent: (data) => request('/students/', { method: 'POST', body: JSON.stringify(data) }),
+  updateStudent: (id, data) => request(`/students/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateGuardian: (alunoId, data) => request(`/students/${alunoId}/responsavel`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Matrículas & Espera
   getEnrollments: () => request('/enrollments/'),
@@ -103,6 +105,14 @@ export const api = {
   }),
   getMakeups: () => request('/attendance/makeups'),
   createMakeup: (data) => request('/attendance/makeups', { method: 'POST', body: JSON.stringify(data) }),
+  getAttendanceClassesSummary: () => request('/attendance/reports/classes-summary'),
+  getAttendanceStudentHistory: (alunoId) => request(`/attendance/reports/student-history?aluno_id=${alunoId}`),
+
+  // Gestão de Usuários e Acessos
+  getUsers: () => request('/users/'),
+  createUser: (data) => request('/users/', { method: 'POST', body: JSON.stringify(data) }),
+  updateUser: (id, data) => request(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
 
   // Financeiro & DRE
   getInvoices: () => request('/financial/invoices'),

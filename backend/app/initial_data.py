@@ -1,6 +1,7 @@
 import logging
 from sqlalchemy.orm import Session
 
+from sqlalchemy import inspect, text
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.core.audit import registrar_auditoria
@@ -11,6 +12,33 @@ from app.models.course import Course
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def aplicar_migracoes(engine) -> None:
+    """Aplica migrações incrementais seguras (ALTER TABLE) caso as colunas novas ainda não existam."""
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+
+        if "matriculas" in tables:
+            cols = [c["name"] for c in inspector.get_columns("matriculas")]
+            with engine.begin() as conn:
+                if "dia_vencimento" not in cols:
+                    logger.info("Migrando tabela matriculas: adicionando dia_vencimento")
+                    conn.execute(text("ALTER TABLE matriculas ADD COLUMN dia_vencimento INTEGER DEFAULT 10;"))
+                if "quantidade_parcelas" not in cols:
+                    logger.info("Migrando tabela matriculas: adicionando quantidade_parcelas")
+                    conn.execute(text("ALTER TABLE matriculas ADD COLUMN quantidade_parcelas INTEGER DEFAULT 12;"))
+
+        if "users" in tables:
+            cols = [c["name"] for c in inspector.get_columns("users")]
+            with engine.begin() as conn:
+                if "professor_id" not in cols:
+                    logger.info("Migrando tabela users: adicionando professor_id")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN professor_id INTEGER;"))
+    except Exception as e:
+        logger.warning(f"Aviso ao aplicar migrações automáticas: {e}")
+
 
 SALAS_PADRAO = [
     {"nome": "Sala 1", "capacidade": 9, "descricao": "Sala multiuso de artes"},
@@ -37,6 +65,7 @@ CURSOS_PADRAO = [
 def init_db(db: Session) -> None:
     """Cria tabelas se não existirem e garante o usuário administrador padrão e dados iniciais."""
     Base.metadata.create_all(bind=engine)
+    aplicar_migracoes(engine)
 
     # --- Usuário administrador ---
     admin_email = settings.FIRST_SUPERUSER_EMAIL.strip().lower()

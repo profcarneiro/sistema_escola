@@ -101,6 +101,14 @@ def list_class_groups(
     if professor_id:
         query = query.filter(ClassGroup.professor_id == professor_id)
 
+    # Professores têm acesso apenas às próprias turmas
+    if current_user.role == UserRole.PROFESSOR.value:
+        prof = db.query(Teacher).filter((Teacher.user_id == current_user.id) | (Teacher.email == current_user.email)).first()
+        if prof:
+            query = query.filter(ClassGroup.professor_id == prof.id)
+        else:
+            return []
+
     turmas = query.order_by(ClassGroup.dia_semana.asc(), ClassGroup.horario_inicio.asc()).all()
     return [formatar_turma_response(t) for t in turmas]
 

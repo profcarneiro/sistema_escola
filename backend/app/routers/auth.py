@@ -8,6 +8,7 @@ from app.core.security import verify_password, create_access_token, decode_acces
 from app.core.audit import registrar_auditoria
 from app.database import get_db
 from app.models.user import User, UserRole
+from app.models.teacher import Teacher
 from app.schemas.user import UserLogin, Token, UserResponse
 
 router = APIRouter(prefix="/auth", tags=["Autenticação"])
@@ -139,6 +140,14 @@ def login_json(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuário inativo. Entre em contato com a Direção da escola."
         )
+
+    if user.role == UserRole.PROFESSOR.value and not user.professor_id:
+        t = db.query(Teacher).filter((Teacher.user_id == user.id) | (Teacher.email == user.email)).first()
+        if t:
+            user.professor_id = t.id
+            t.user_id = user.id
+            db.commit()
+            db.refresh(user)
 
     access_token = create_access_token(
         subject=user.id,

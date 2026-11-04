@@ -16,6 +16,8 @@ class MatriculaBase(BaseModel):
     valor_mensalidade: float = Field(..., ge=0.0, description="Valor base da mensalidade em R$")
     desconto_percentual: float = Field(0.0, ge=0.0, le=100.0, description="Desconto aplicado em %")
     tipo_desconto: Optional[str] = Field(None, description="Tipo de desconto: irmao, indicacao, bolsa")
+    dia_vencimento: Optional[int] = Field(10, ge=1, le=31, description="Dia preferencial de vencimento das parcelas")
+    quantidade_parcelas: Optional[int] = Field(12, ge=1, le=24, description="Quantidade de mensalidades/parcelas contratadas")
     aula_experimental: bool = Field(False, description="Indica se é uma matrícula experimental/cortesia")
     observacoes: Optional[str] = Field(None, description="Observações gerais da matrícula")
 
@@ -35,8 +37,11 @@ class MatriculaUpdate(BaseModel):
     status: Optional[StatusMatricula] = None
     contrato_assinado: Optional[bool] = None
     data_assinatura_contrato: Optional[datetime] = None
+    valor_mensalidade: Optional[float] = Field(None, ge=0.0)
     desconto_percentual: Optional[float] = Field(None, ge=0.0, le=100.0)
     tipo_desconto: Optional[str] = None
+    dia_vencimento: Optional[int] = Field(None, ge=1, le=31)
+    quantidade_parcelas: Optional[int] = Field(None, ge=1, le=24)
     motivo_cancelamento: Optional[str] = None
     multa_cancelamento: Optional[float] = Field(None, ge=0.0)
     observacoes: Optional[str] = None
@@ -61,6 +66,8 @@ class MatriculaResponse(MatriculaBase):
     aluno_nome: Optional[str] = None
     turma_nome: Optional[str] = None
     valor_com_desconto: Optional[float] = None
+    dia_vencimento: Optional[int] = 10
+    quantidade_parcelas: Optional[int] = 12
     criada_em: datetime
 
     model_config = ConfigDict(from_attributes=True)

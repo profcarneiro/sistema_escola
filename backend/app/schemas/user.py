@@ -16,6 +16,7 @@ class UserBase(BaseModel):
     nome: str = Field(..., min_length=2, max_length=150, description="Nome completo do usuário")
     email: EmailStr = Field(..., description="E-mail de acesso único")
     role: UserRoleEnum = Field(default=UserRoleEnum.SECRETARIA, description="Perfil de acesso (RBAC)")
+    professor_id: Optional[int] = Field(None, description="ID do professor vinculado caso perfil seja Professor")
     ativo: bool = Field(default=True, description="Indica se a conta está ativa")
 
 
@@ -27,6 +28,7 @@ class UserUpdate(BaseModel):
     nome: Optional[str] = Field(None, min_length=2, max_length=150)
     email: Optional[EmailStr] = None
     role: Optional[UserRoleEnum] = None
+    professor_id: Optional[int] = None
     ativo: Optional[bool] = None
     senha: Optional[str] = Field(None, min_length=6, max_length=100)
 
@@ -36,6 +38,7 @@ class UserResponse(BaseModel):
     nome: str
     email: EmailStr
     role: str
+    professor_id: Optional[int] = None
     ativo: bool
     criado_em: datetime
     atualizado_em: Optional[datetime] = None
