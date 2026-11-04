@@ -76,8 +76,8 @@ Adicione as seguintes variáveis:
 | `DATABASE_URL` | `postgresql://postgres.[REF]:[SENHA]@aws-0-[REGION].pooler.supabase.com:6543/postgres` | URI copiada do Supabase com sua senha |
 | `SECRET_KEY` | *(Gere uma chave aleatória ou clique em Generate)* | Chave de assinatura dos tokens JWT |
 | `ENVIRONMENT` | `production` | Desativa hot-reload e otimiza para produção |
-| `FIRST_SUPERUSER_EMAIL` | `admin@hbartes.com` | E-mail do administrador inicial |
-| `FIRST_SUPERUSER_PASSWORD` | `admin123` | Senha inicial (altere após o primeiro login) |
+| `FIRST_SUPERUSER_EMAIL` | *(Seu e-mail profissional, ex: diretoria@suaescola.com)* | E-mail do administrador inicial |
+| `FIRST_SUPERUSER_PASSWORD` | *(Sua senha segura definitiva)* | Senha do administrador inicial |
 | `PORT` | `8080` | Porta interna (ou deixe que o Render preencha) |
 
 5. Clique em **Create Web Service** no final da página.
@@ -93,7 +93,7 @@ Adicione as seguintes variáveis:
 2. Durante a primeira inicialização, o backend conectará ao Supabase e executará automaticamente:
    - Criação de todas as tabelas (alunos, turmas, cursos, matrículas, financeiro, etc.).
    - Carga inicial com as 6 salas padrão (capacidade 9) e as 9 modalidades de arte.
-   - Cadastro do usuário administrador (`admin@hbartes.com`).
+   - Cadastro do usuário administrador conforme as variáveis `FIRST_SUPERUSER_EMAIL` e `FIRST_SUPERUSER_PASSWORD`.
 3. Quando o log exibir `Application startup complete` e o status mudar para **Live**, o sistema estará no ar!
 
 Acesse:
@@ -101,11 +101,8 @@ Acesse:
 
 ---
 
-## 🔑 Primeiro Acesso em Produção
+## 🔑 Acesso em Produção
 
 - **URL:** `https://<seu-app>.onrender.com`
 - **Swagger Docs:** `https://<seu-app>.onrender.com/api/v1/docs`
-- **E-mail:** `admin@hbartes.com`
-- **Senha Inicial:** `admin123` (ou a senha que você configurou em `FIRST_SUPERUSER_PASSWORD`)
-
-> 🔒 **Dica de Segurança:** No primeiro acesso, crie seu usuário pessoal da Direção/Coordenação e altere a senha do admin padrão.
+- **Login:** O e-mail e senha que você definiu nas variáveis `FIRST_SUPERUSER_EMAIL` e `FIRST_SUPERUSER_PASSWORD` no Render.

@@ -12,6 +12,6 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: FIRST_SUPERUSER_EMAIL
-        value: admin@hbartes.com
+        sync: false
       - key: FIRST_SUPERUSER_PASSWORD
-        value: admin123
+        sync: false

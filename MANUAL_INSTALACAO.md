@@ -76,8 +76,6 @@ Pronto! O terminal exibirá:
 ====================================================================
  🌐 Aplicação Web Completa:  http://localhost:8080
  📖 Documentação da API:    http://localhost:8080/api/v1/docs
- 🔑 Usuário Administrador:   admin@hbartes.com
- 🔒 Senha Inicial:           admin123
 ====================================================================
 ```
 
@@ -150,13 +148,13 @@ No navegador do outro computador (conectado ao mesmo Wi-Fi ou cabo da escola), d
 
 ---
 
-## 6. Credenciais de Primeiro Acesso
+## 6. Credenciais de Acesso (Administrador)
 
-Na primeira execução, o banco de dados `escola_artes.db` é criado automaticamente com uma carga inicial de dados (as 6 salas de aula com teto de 9 alunos, as 9 modalidades de arte e o usuário administrador):
+Na primeira execução, o banco de dados é criado automaticamente com uma carga inicial de dados (as 6 salas de aula com teto de 9 alunos e as 9 modalidades de arte):
 
-- **E-mail:** `admin@hbartes.com`
-- **Senha:** `admin123`
-- **Perfil:** Direção (Acesso irrestrito a todos os módulos)
+- **Configuração de Usuário:** O e-mail e a senha do administrador inicial são definidos através das variáveis de ambiente `FIRST_SUPERUSER_EMAIL` e `FIRST_SUPERUSER_PASSWORD` (ou no arquivo `.env`).
+- **Perfil:** Direção (Acesso irrestrito a todos os módulos).
+- Em ambiente de produção, configure sempre uma senha forte diretamente nas variáveis do servidor.
 
 ---
 

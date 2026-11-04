@@ -28,8 +28,8 @@ export default function App() {
   const [backups, setBackups] = useState([]);
 
   // Estados de login
-  const [email, setEmail] = useState('admin@hbartes.com');
-  const [senha, setSenha] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [senha, setSenha] = useState('');
   const [loginError, setLoginError] = useState('');
 
   // Modais de Cursos
@@ -204,7 +204,7 @@ export default function App() {
           </form>
 
           <div className="mt-6 pt-6 border-t border-slate-100 text-center">
-            <span className="text-xs text-slate-400">Credenciais padrão: admin@hbartes.com / admin123</span>
+            <span className="text-xs text-slate-400">Acesso restrito e seguro • Escola de Artes Helena Barufaldi</span>
           </div>
         </div>
       </div>

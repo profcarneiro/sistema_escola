@@ -229,11 +229,11 @@ A aplicação conta com uma interface moderna, responsiva e totalmente dinâmica
 
 ---
 
-## 🔑 Credenciais Padrão (Primeiro Acesso)
+## 🔑 Credenciais de Acesso (Administrador)
 
-- **E-mail:** `admin@hbartes.com`
-- **Senha:** `admin123`
-- **Perfil:** Direção (Acesso Total)
+- **Desenvolvimento Local:** configurável no arquivo `.env` ou variáveis de ambiente.
+- **Produção (Render):** defina as variáveis de ambiente `FIRST_SUPERUSER_EMAIL` e `FIRST_SUPERUSER_PASSWORD` no painel de controle do servidor com seu e-mail e senha segura definitivos.
+- **Perfil:** Direção (Acesso Total ao sistema)
 
 ---
 

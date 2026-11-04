@@ -26,8 +26,6 @@ if __name__ == "__main__":
     print("=" * 68)
     print(f" 🌐 Servidor ativo na porta: {port}")
     print(f" 📖 Documentação da API:     /api/v1/docs")
-    print(" 🔑 Usuário Administrador:   admin@hbartes.com")
-    print(" 🔒 Senha Inicial:           admin123")
     print("=" * 68)
     if not is_prod:
         print(" ⚠️  IMPORTANTE (Local): Acesse com HTTP comum (sem o 's'):")
