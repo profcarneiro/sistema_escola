@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: escola-artes-helenabarufaldi
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENVIRONMENT
+        value: production
+      - key: FIRST_SUPERUSER_EMAIL
+        value: admin@hbartes.com
+      - key: FIRST_SUPERUSER_PASSWORD
+        value: admin123

@@ -61,10 +61,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Configuração de CORS para aplicações frontend locais
+# Configuração de CORS para aplicações frontend locais e remotas (Render / Supabase)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
