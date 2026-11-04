@@ -5,7 +5,27 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from app.core.config import settings
 
 # Normaliza protocolo de banco de dados (ex: Supabase e Render fornecem postgres://)
-database_url = settings.DATABASE_URL
+database_url = settings.DATABASE_URL.strip().strip("'\"")
+
+if database_url.startswith("https://") or database_url.startswith("http://"):
+    raise ValueError(
+        "\n" + "=" * 76 + "\n"
+        "❌ ERRO NA CONFIGURAÇÃO DO DATABASE_URL:\n"
+        "Você configurou a URL da API Web do Supabase (iniciada com https://) "
+        "no lugar da URI de conexão do PostgreSQL!\n\n"
+        "A biblioteca de banco de dados (SQLAlchemy) requer uma URI de PostgreSQL que "
+        "comece com 'postgresql://' ou 'postgres://'.\n\n"
+        "👉 ONDE OBTER A URI CORRETA NO SUPABASE:\n"
+        "1. No painel do seu projeto no Supabase, clique no botão 'Connect' (no topo da tela)\n"
+        "   ou vá em 'Project Settings' (ícone de engrenagem) -> 'Database'.\n"
+        "2. Na seção 'Connection string', clique na aba 'URI'.\n"
+        "3. Selecione o modo 'Transaction' (Connection Pooler na porta 6543).\n"
+        "4. A URL correta tem o formato:\n"
+        "   postgresql://postgres.[PROJECT_REF]:[SUA_SENHA]@aws-0-[REGION].pooler.supabase.com:6543/postgres\n\n"
+        "5. No Render -> Environment, substitua o valor de DATABASE_URL pela URI acima.\n"
+        "=" * 76 + "\n"
+    )
+
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql+psycopg2://", 1)
 elif database_url.startswith("postgresql://") and not database_url.startswith("postgresql+"):
