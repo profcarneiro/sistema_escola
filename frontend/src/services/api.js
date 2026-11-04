@@ -70,7 +70,16 @@ export const api = {
   getRooms: () => request('/rooms/'),
   getCourses: () => request('/courses/'),
   createCourse: (data) => request('/courses/', { method: 'POST', body: JSON.stringify(data) }),
+  updateCourse: (id, data) => request(`/courses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCourse: (id) => request(`/courses/${id}`, { method: 'DELETE' }),
+
+  // Professores
   getTeachers: () => request('/teachers/'),
+  createTeacher: (data) => request('/teachers/', { method: 'POST', body: JSON.stringify(data) }),
+  updateTeacher: (id, data) => request(`/teachers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTeacher: (id) => request(`/teachers/${id}`, { method: 'DELETE' }),
+
+  // Turmas
   getClasses: () => request('/classes/'),
   createClass: (data) => request('/classes/', { method: 'POST', body: JSON.stringify(data) }),
 

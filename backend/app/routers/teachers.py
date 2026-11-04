@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import registrar_auditoria
 from app.database import get_db
 from app.models.teacher import Teacher
+from app.models.class_group import ClassGroup
 from app.models.user import User, UserRole
 from app.schemas.teacher import TeacherCreate, TeacherUpdate, TeacherResponse
 from app.routers.auth import get_current_active_user, require_roles
@@ -171,3 +172,38 @@ def update_teacher(
         ip=client_ip
     )
     return teacher
+
+
+@router.delete("/{teacher_id}", status_code=status.HTTP_200_OK, summary="Excluir ou desativar professor")
+def delete_teacher(
+    teacher_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))
+):
+    teacher = db.query(Teacher).filter(Teacher.id == teacher_id).first()
+    if not teacher:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor não encontrado.")
+
+    has_classes = db.query(ClassGroup).filter(ClassGroup.professor_id == teacher_id).count()
+    if has_classes > 0:
+        teacher.ativo = False
+        db.commit()
+        db.refresh(teacher)
+        msg = f"Professor(a) '{teacher.nome}' possui turmas vinculadas e foi desativado(a)."
+    else:
+        db.delete(teacher)
+        db.commit()
+        msg = f"Professor(a) '{teacher.nome}' excluído(a) com sucesso."
+
+    client_ip = request.client.host if request.client else None
+    registrar_auditoria(
+        db=db,
+        acao="PROFESSOR_EXCLUIDO",
+        entidade="Teacher",
+        registro_id=str(teacher_id),
+        detalhes={"acao": msg},
+        usuario=current_user,
+        ip=client_ip
+    )
+    return {"status": "ok", "mensagem": msg}

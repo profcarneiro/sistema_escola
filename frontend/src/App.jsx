@@ -3,7 +3,7 @@ import {
   Palette, Users, BookOpen, Calendar, CreditCard, MessageSquare,
   HardDrive, LogOut, Plus, CheckCircle, AlertTriangle, FileText,
   DollarSign, TrendingUp, ShieldCheck, Clock, Download, RefreshCw, X,
-  GraduationCap, Check, UserPlus
+  GraduationCap, Check, Edit, Trash2, Briefcase, Phone, Mail
 } from 'lucide-react';
 import { api, authStorage } from './services/api';
 
@@ -32,11 +32,20 @@ export default function App() {
   const [senha, setSenha] = useState('admin123');
   const [loginError, setLoginError] = useState('');
 
-  // Modais
-  const [showStudentModal, setShowStudentModal] = useState(false);
+  // Modais de Cursos
   const [showCourseModal, setShowCourseModal] = useState(false);
+  const [editingCourse, setEditingCourse] = useState(null);
+
+  // Modais de Professores
+  const [showTeacherModal, setShowTeacherModal] = useState(false);
+  const [editingTeacher, setEditingTeacher] = useState(null);
+
+  // Modais de Alunos e Matrículas
+  const [showStudentModal, setShowStudentModal] = useState(false);
   const [showEnrollmentModal, setShowEnrollmentModal] = useState(false);
   const [preselectedStudentId, setPreselectedStudentId] = useState(null);
+
+  // Modais de Turmas e Financeiro
   const [showClassModal, setShowClassModal] = useState(false);
   const [showPayModal, setShowPayModal] = useState(null);
   const [payMethod, setPayMethod] = useState('PIX');
@@ -122,14 +131,13 @@ export default function App() {
     }
   }, [token, activeTab]);
 
-  // Se trocar a turma na frequência, carrega o histórico de aulas
+  // Se trocar a turma na frequência, carrega histórico de aulas
   useEffect(() => {
     if (selectedClassForAttendance) {
       api.getLessons(selectedClassForAttendance)
         .then((data) => setClassLessonsHistory(data))
         .catch(() => setClassLessonsHistory([]));
       
-      // Inicializa presença de todos os matriculados como PRESENTE
       const turmEnr = enrollments.filter(e => e.turma_id === parseInt(selectedClassForAttendance) && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL'));
       const initialAttendance = {};
       turmEnr.forEach(e => {
@@ -240,7 +248,7 @@ export default function App() {
     }
   };
 
-  // 2. Cadastrar Curso / Modalidade Artística
+  // 2. Cadastrar / Editar Curso
   const handleCreateCourse = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -261,7 +269,106 @@ export default function App() {
     }
   };
 
-  // 3. Matricular Aluno em Turma/Curso
+  const handleUpdateCourse = async (e) => {
+    e.preventDefault();
+    if (!editingCourse) return;
+    const formData = new FormData(e.target);
+    const payload = {
+      nome: formData.get('nome'),
+      descricao: formData.get('descricao') || null,
+      duracao_meses: parseInt(formData.get('duracao_meses') || '12'),
+      valor_mensalidade: parseFloat(formData.get('valor_mensalidade') || '0'),
+      ativo: formData.get('ativo') === 'on'
+    };
+
+    try {
+      await api.updateCourse(editingCourse.id, payload);
+      showToast(`Modalidade '${payload.nome}' atualizada com sucesso!`);
+      setEditingCourse(null);
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteCourse = async (course) => {
+    const confirmMsg = `Deseja realmente excluir ou desativar o curso '${course.nome}'?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await api.deleteCourse(course.id);
+      showToast(res.mensagem || 'Curso processado com sucesso!');
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  // 3. Cadastrar / Editar Professor
+  const handleCreateTeacher = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const subId = formData.get('substituto_id');
+    const payload = {
+      nome: formData.get('nome'),
+      email: formData.get('email'),
+      telefone: formData.get('telefone') || null,
+      endereco: formData.get('endereco') || null,
+      especialidades: formData.get('especialidades') || null,
+      disponibilidade: formData.get('disponibilidade') || null,
+      substituto_id: subId && subId !== '' ? parseInt(subId) : null,
+    };
+
+    try {
+      await api.createTeacher(payload);
+      showToast(`Professor(a) '${payload.nome}' cadastrado(a) com sucesso!`);
+      setShowTeacherModal(false);
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleUpdateTeacher = async (e) => {
+    e.preventDefault();
+    if (!editingTeacher) return;
+    const formData = new FormData(e.target);
+    const subId = formData.get('substituto_id');
+    const payload = {
+      nome: formData.get('nome'),
+      email: formData.get('email'),
+      telefone: formData.get('telefone') || null,
+      endereco: formData.get('endereco') || null,
+      especialidades: formData.get('especialidades') || null,
+      disponibilidade: formData.get('disponibilidade') || null,
+      substituto_id: subId && subId !== '' ? parseInt(subId) : null,
+      ativo: formData.get('ativo') === 'on',
+    };
+
+    try {
+      await api.updateTeacher(editingTeacher.id, payload);
+      showToast(`Professor(a) '${payload.nome}' atualizado(a) com sucesso!`);
+      setEditingTeacher(null);
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteTeacher = async (teacher) => {
+    const confirmMsg = `Deseja realmente excluir ou desativar o(a) professor(a) '${teacher.nome}'?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await api.deleteTeacher(teacher.id);
+      showToast(res.mensagem || 'Professor processado com sucesso!');
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  // 4. Matricular Aluno em Turma/Curso
   const handleCreateEnrollment = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -290,7 +397,7 @@ export default function App() {
     }
   };
 
-  // 4. Cadastrar Turma
+  // 5. Cadastrar Turma
   const handleCreateClass = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -317,7 +424,7 @@ export default function App() {
     }
   };
 
-  // 5. Salvar Diário de Classe e Frequência
+  // 6. Salvar Diário de Classe e Frequência
   const handleSaveAttendance = async (e) => {
     e.preventDefault();
     if (!selectedClassForAttendance) {
@@ -329,7 +436,6 @@ export default function App() {
     if (!turmaObj) return;
 
     try {
-      // 1. Cria a lição no diário
       const lesson = await api.createLesson({
         turma_id: turmaObj.id,
         professor_id: turmaObj.professor_id,
@@ -340,7 +446,6 @@ export default function App() {
         observacoes: null
       });
 
-      // 2. Registra o lote de chamada
       const turmEnr = enrollments.filter(e => e.turma_id === turmaObj.id && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL'));
       const frequencias = turmEnr.map(e => ({
         aluno_id: e.aluno_id,
@@ -358,7 +463,6 @@ export default function App() {
       setLessonContent('');
       setLessonMaterials('');
 
-      // Recarrega histórico
       const updatedLessons = await api.getLessons(turmaObj.id);
       setClassLessonsHistory(updatedLessons);
     } catch (err) {
@@ -366,7 +470,7 @@ export default function App() {
     }
   };
 
-  // 6. Quitar Mensalidade
+  // 7. Quitar Mensalidade
   const handlePayInvoice = async () => {
     if (!showPayModal) return;
     try {
@@ -382,7 +486,7 @@ export default function App() {
     }
   };
 
-  // 7. WhatsApp Boas-Vindas
+  // 8. WhatsApp Links
   const handleSendWelcomeWhatsApp = async (matriculaId) => {
     try {
       const data = await api.getEnrollmentWelcomeLink(matriculaId);
@@ -392,7 +496,6 @@ export default function App() {
     }
   };
 
-  // 8. WhatsApp Cobrança
   const handleOpenWhatsApp = async (invoiceId) => {
     try {
       const data = await api.getInvoiceReminderLink(invoiceId);
@@ -413,7 +516,7 @@ export default function App() {
     }
   };
 
-  // Utilitários de busca de dados relacionados
+  // Utilitários
   const getStudentEnrollments = (studentId) => {
     return enrollments.filter(e => e.aluno_id === studentId && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL'));
   };
@@ -452,6 +555,7 @@ export default function App() {
             { id: 'dashboard', label: 'Painel Geral', icon: TrendingUp },
             { id: 'students', label: 'Alunos & Responsáveis', icon: Users },
             { id: 'courses', label: 'Cursos & Modalidades', icon: BookOpen },
+            { id: 'teachers', label: 'Professores & Docentes', icon: Briefcase },
             { id: 'enrollments', label: 'Matrículas & Contratos', icon: GraduationCap },
             { id: 'classes', label: 'Turmas & Horários', icon: Calendar },
             { id: 'rooms', label: 'Salas & Capacidade (9)', icon: Palette },
@@ -508,6 +612,7 @@ export default function App() {
               {activeTab === 'dashboard' && 'Painel Geral de Indicadores'}
               {activeTab === 'students' && 'Gestão de Alunos e Responsáveis'}
               {activeTab === 'courses' && 'Catálogo de Cursos & Modalidades Artísticas'}
+              {activeTab === 'teachers' && 'Corpo Docente e Professores'}
               {activeTab === 'enrollments' && 'Matrículas de Alunos e Vínculos com Turmas'}
               {activeTab === 'classes' && 'Controle de Turmas e Capacidade Máxima'}
               {activeTab === 'rooms' && 'Estúdios Físicos (Teto de 9 Alunos)'}
@@ -515,7 +620,7 @@ export default function App() {
               {activeTab === 'attendance' && 'Diário de Classe, Presença e Frequência'}
               {activeTab === 'backups' && 'Segurança e Backup Local SQLite'}
             </h1>
-            <p className="text-xs text-slate-500">Unidade Nova Odessa/SP • Porta 8080 • Servidor Local Seguro</p>
+            <p className="text-xs text-slate-500">Unidade Nova Odessa/SP • Porta 8080 • Servidor Local</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -535,7 +640,6 @@ export default function App() {
           {/* TAB 1: DASHBOARD */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              {/* Metrics Cards */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
@@ -550,9 +654,9 @@ export default function App() {
 
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-semibold text-slate-400 uppercase">Modalidades Ativas</span>
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Modalidades / Cursos</span>
                     <h3 className="text-2xl font-bold text-slate-800 mt-1">{courses.length}</h3>
-                    <p className="text-xs text-slate-500 mt-1">{classes.length} turmas cadastradas</p>
+                    <p className="text-xs text-slate-500 mt-1">{teachers.length} professores ativos</p>
                   </div>
                   <div className="w-12 h-12 bg-blue-50 text-blue-700 rounded-xl flex items-center justify-center">
                     <BookOpen className="w-6 h-6" />
@@ -618,7 +722,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Resumo DRE do Mês */}
+              {/* Resumo DRE */}
               {dre && (
                 <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                   <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
@@ -758,7 +862,7 @@ export default function App() {
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex items-center justify-between">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Catálogo de Modalidades de Arte</h3>
-                  <p className="text-xs text-slate-500">Cadastre novas técnicas artísticas e defina o valor base da mensalidade.</p>
+                  <p className="text-xs text-slate-500">Cadastre, edite e gerencie as modalidades artísticas e mensalidades da escola.</p>
                 </div>
                 <button
                   onClick={() => setShowCourseModal(true)}
@@ -783,9 +887,27 @@ export default function App() {
                           <span className="w-8 h-8 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center font-bold text-sm">
                             <BookOpen className="w-4 h-4" />
                           </span>
-                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800">
-                            Ativo
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                              course.ativo ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {course.ativo ? 'Ativo' : 'Inativo'}
+                            </span>
+                            <button
+                              onClick={() => setEditingCourse(course)}
+                              className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded transition"
+                              title="Editar modalidade"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCourse(course)}
+                              className="p-1 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded transition"
+                              title="Excluir ou desativar modalidade"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                         <h4 className="text-base font-bold text-slate-800 mt-3">{course.nome}</h4>
                         <p className="text-xs text-slate-500 mt-1 line-clamp-3">
@@ -814,7 +936,111 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 4: MATRÍCULAS & CONTRATOS */}
+          {/* TAB 4: PROFESSORES & DOCENTES */}
+          {activeTab === 'teachers' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-lg">Corpo Docente e Professores</h3>
+                  <p className="text-xs text-slate-500">Cadastre os professores da escola para vinculá-los às turmas semanais.</p>
+                </div>
+                <button
+                  onClick={() => setShowTeacherModal(true)}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Novo Professor
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                {teachers.map((t) => {
+                  const teacherClasses = classes.filter(c => c.professor_id === t.id);
+                  return (
+                    <div key={t.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between hover:border-amber-400 transition">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 font-bold flex items-center justify-center text-sm">
+                            {t.nome.charAt(0)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                              t.ativo ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {t.ativo ? 'Ativo' : 'Inativo'}
+                            </span>
+                            <button
+                              onClick={() => setEditingTeacher(t)}
+                              className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded transition"
+                              title="Editar professor"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTeacher(t)}
+                              className="p-1 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded transition"
+                              title="Excluir ou desativar professor"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <h4 className="text-base font-bold text-slate-800 mt-3">{t.nome}</h4>
+                        <div className="space-y-1 mt-2 text-xs text-slate-500">
+                          <p className="flex items-center gap-1.5">
+                            <Mail className="w-3.5 h-3.5 text-slate-400" /> {t.email}
+                          </p>
+                          {t.telefone && (
+                            <p className="flex items-center gap-1.5">
+                              <Phone className="w-3.5 h-3.5 text-slate-400" /> {t.telefone}
+                            </p>
+                          )}
+                        </div>
+
+                        {t.especialidades && (
+                          <div className="mt-3">
+                            <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide block mb-1">
+                              Especialidades:
+                            </span>
+                            <div className="flex flex-wrap gap-1">
+                              {t.especialidades.split(',').map((esp, idx) => (
+                                <span key={idx} className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded text-[10px] font-medium">
+                                  {esp.trim()}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <span className="text-slate-500">Turmas lecionadas:</span>
+                        <span className="font-bold text-amber-800">{teacherClasses.length} turmas</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {teachers.length === 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-8 text-center">
+                  <Briefcase className="w-10 h-10 text-amber-700 mx-auto mb-2" />
+                  <h4 className="font-bold text-amber-900 text-base">Nenhum professor cadastrado</h4>
+                  <p className="text-xs text-amber-800 mt-1 max-w-md mx-auto">
+                    Cadastre os professores da escola para poder vinculá-los às turmas e horários de aula.
+                  </p>
+                  <button
+                    onClick={() => setShowTeacherModal(true)}
+                    className="mt-4 px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow"
+                  >
+                    Cadastrar Primeiro Professor
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 5: MATRÍCULAS & CONTRATOS */}
           {activeTab === 'enrollments' && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-slate-200 flex items-center justify-between">
@@ -896,7 +1122,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 5: TURMAS & HORÁRIOS */}
+          {/* TAB 6: TURMAS & HORÁRIOS */}
           {activeTab === 'classes' && (
             <div className="space-y-6">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex items-center justify-between">
@@ -975,7 +1201,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 6: SALAS & CAPACIDADE */}
+          {/* TAB 7: SALAS & CAPACIDADE */}
           {activeTab === 'rooms' && (
             <div className="space-y-6">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1023,10 +1249,10 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 7: FINANCEIRO & DRE */}
+          {/* TAB 8: FINANCEIRO & DRE */}
           {activeTab === 'financial' && (
             <div className="space-y-6">
-              {/* Inadimplentes e Cobrança Rápida */}
+              {/* Inadimplentes */}
               {defaulters.length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-6">
                   <div className="flex items-center justify-between mb-4">
@@ -1128,7 +1354,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 8: FREQUÊNCIA & DIÁRIO DE CLASSE */}
+          {/* TAB 9: FREQUÊNCIA & DIÁRIO DE CLASSE */}
           {activeTab === 'attendance' && (
             <div className="space-y-6">
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
@@ -1272,7 +1498,7 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 9: BACKUPS */}
+          {/* TAB 10: BACKUPS */}
           {activeTab === 'backups' && (
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-6">
               <div className="flex items-center justify-between">
@@ -1315,7 +1541,7 @@ export default function App() {
         </div>
       </main>
 
-      {/* MODAL 1: NOVO ALUNO */}
+      {/* MODAL: NOVO ALUNO */}
       {showStudentModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
@@ -1373,7 +1599,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL 2: NOVO CURSO / MODALIDADE ARTÍSTICA */}
+      {/* MODAL: NOVO CURSO / MODALIDADE ARTÍSTICA */}
       {showCourseModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
@@ -1436,7 +1662,277 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL 3: MATRICULAR ALUNO EM CURSO / TURMA */}
+      {/* MODAL: EDITAR CURSO */}
+      {editingCourse && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">Editar Modalidade Artística</h3>
+              <button onClick={() => setEditingCourse(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleUpdateCourse} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nome do Curso / Modalidade</label>
+                <input
+                  name="nome"
+                  required
+                  defaultValue={editingCourse.nome}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Descrição</label>
+                <textarea
+                  name="descricao"
+                  rows="3"
+                  defaultValue={editingCourse.descricao || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                ></textarea>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Duração (Meses)</label>
+                  <input
+                    name="duracao_meses"
+                    type="number"
+                    defaultValue={editingCourse.duracao_meses}
+                    min="1"
+                    required
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Mensalidade Base (R$)</label>
+                  <input
+                    name="valor_mensalidade"
+                    type="number"
+                    step="0.01"
+                    defaultValue={editingCourse.valor_mensalidade}
+                    required
+                    className="w-full px-3 py-2 border rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  name="ativo"
+                  type="checkbox"
+                  id="course_active"
+                  defaultChecked={editingCourse.ativo}
+                  className="rounded text-amber-600"
+                />
+                <label htmlFor="course_active" className="text-xs text-slate-700 font-medium">Modalidade Ativa no Catálogo</label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button type="button" onClick={() => setEditingCourse(null)} className="px-4 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
+                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">Salvar Alterações</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: NOVO PROFESSOR */}
+      {showTeacherModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">Cadastrar Novo Professor</h3>
+              <button onClick={() => setShowTeacherModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateTeacher} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nome Completo</label>
+                <input
+                  name="nome"
+                  required
+                  placeholder="Ex: Prof. Helena Barufaldi"
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">E-mail Profissional</label>
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    placeholder="professor@hbartes.com"
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Telefone / WhatsApp</label>
+                  <input
+                    name="telefone"
+                    placeholder="(19) 99999-9999"
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Especialidades Artísticas</label>
+                <input
+                  name="especialidades"
+                  placeholder="Ex: Desenho Artístico, Aquarela, Óleo sobre Tela, Mangá"
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Disponibilidade de Dias/Horários</label>
+                  <input
+                    name="disponibilidade"
+                    placeholder="Ex: Segundas e Terças - Tarde"
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Professor Substituto Preferencial</label>
+                  <select
+                    name="substituto_id"
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="">-- Nenhum substituto --</option>
+                    {teachers.map(t => (
+                      <option key={t.id} value={t.id}>{t.nome}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Endereço Residencial (Opcional)</label>
+                <input
+                  name="endereco"
+                  placeholder="Rua, número, bairro, cidade"
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button type="button" onClick={() => setShowTeacherModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
+                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">Salvar Professor</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDITAR PROFESSOR */}
+      {editingTeacher && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">Editar Professor(a)</h3>
+              <button onClick={() => setEditingTeacher(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleUpdateTeacher} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nome Completo</label>
+                <input
+                  name="nome"
+                  required
+                  defaultValue={editingTeacher.nome}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">E-mail Profissional</label>
+                  <input
+                    name="email"
+                    type="email"
+                    required
+                    defaultValue={editingTeacher.email}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Telefone / WhatsApp</label>
+                  <input
+                    name="telefone"
+                    defaultValue={editingTeacher.telefone || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Especialidades Artísticas</label>
+                <input
+                  name="especialidades"
+                  defaultValue={editingTeacher.especialidades || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Disponibilidade</label>
+                  <input
+                    name="disponibilidade"
+                    defaultValue={editingTeacher.disponibilidade || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Substituto Preferencial</label>
+                  <select
+                    name="substituto_id"
+                    defaultValue={editingTeacher.substituto_id || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="">-- Nenhum substituto --</option>
+                    {teachers.filter(t => t.id !== editingTeacher.id).map(t => (
+                      <option key={t.id} value={t.id}>{t.nome}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Endereço Residencial</label>
+                <input
+                  name="endereco"
+                  defaultValue={editingTeacher.endereco || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  name="ativo"
+                  type="checkbox"
+                  id="teacher_active"
+                  defaultChecked={editingTeacher.ativo}
+                  className="rounded text-amber-600"
+                />
+                <label htmlFor="teacher_active" className="text-xs text-slate-700 font-medium">Professor Ativo no Corpo Docente</label>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button type="button" onClick={() => setEditingTeacher(null)} className="px-4 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
+                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">Salvar Alterações</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: MATRICULAR ALUNO EM CURSO / TURMA */}
       {showEnrollmentModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
@@ -1576,7 +2072,7 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL 4: NOVA TURMA */}
+      {/* MODAL: NOVA TURMA */}
       {showClassModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
@@ -1612,13 +2108,42 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Professor Responsável</label>
-                  <select name="professor_id" required className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
-                    {teachers.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
-                  </select>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-600">Professor Responsável</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowClassModal(false);
+                      setShowTeacherModal(true);
+                    }}
+                    className="text-xs text-amber-700 hover:underline font-semibold flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" /> Cadastrar Novo Professor
+                  </button>
                 </div>
+                {teachers.length > 0 ? (
+                  <select name="professor_id" required className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
+                    {teachers.map(t => <option key={t.id} value={t.id}>{t.nome} ({t.especialidades || 'Geral'})</option>)}
+                  </select>
+                ) : (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center justify-between">
+                    <span>Nenhum professor cadastrado ainda!</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowClassModal(false);
+                        setShowTeacherModal(true);
+                      }}
+                      className="px-2 py-1 bg-red-600 text-white rounded font-semibold text-[11px]"
+                    >
+                      Cadastrar Agora
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Faixa Etária</label>
                   <select name="faixa_etaria" className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
@@ -1628,9 +2153,6 @@ export default function App() {
                     <option value="TERCEIRA_IDADE">TERCEIRA IDADE (65+)</option>
                   </select>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Dia da Semana</label>
                   <select name="dia_semana" className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
@@ -1642,6 +2164,9 @@ export default function App() {
                     <option value="SABADO">Sábado</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Turno</label>
                   <select name="turno" className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
@@ -1650,11 +2175,8 @@ export default function App() {
                     <option value="NOITE">Noite</option>
                   </select>
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Horário de Início (HH:MM)</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Início (HH:MM)</label>
                   <input
                     name="horario_inicio"
                     type="text"
@@ -1665,7 +2187,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Horário de Término (HH:MM)</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Término (HH:MM)</label>
                   <input
                     name="horario_fim"
                     type="text"
@@ -1683,14 +2205,20 @@ export default function App() {
 
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
                 <button type="button" onClick={() => setShowClassModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
-                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">Salvar Turma</button>
+                <button
+                  type="submit"
+                  disabled={teachers.length === 0}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow disabled:opacity-50"
+                >
+                  Salvar Turma
+                </button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* MODAL 5: BAIXA DE PAGAMENTO */}
+      {/* MODAL: BAIXA DE PAGAMENTO */}
       {showPayModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100">

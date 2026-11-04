@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import registrar_auditoria
 from app.database import get_db
 from app.models.course import Course
+from app.models.class_group import ClassGroup
 from app.models.user import User, UserRole
 from app.schemas.course import CourseCreate, CourseUpdate, CourseResponse
 from app.routers.auth import get_current_active_user, require_roles
@@ -129,3 +130,38 @@ def update_course(
         ip=client_ip
     )
     return course
+
+
+@router.delete("/{course_id}", status_code=status.HTTP_200_OK, summary="Excluir ou desativar modalidade artística")
+def delete_course(
+    course_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))
+):
+    course = db.query(Course).filter(Course.id == course_id).first()
+    if not course:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Modalidade não encontrada.")
+
+    has_classes = db.query(ClassGroup).filter(ClassGroup.curso_id == course_id).count()
+    if has_classes > 0:
+        course.ativo = False
+        db.commit()
+        db.refresh(course)
+        msg = f"Modalidade '{course.nome}' possui turmas vinculadas e foi desativada com sucesso."
+    else:
+        db.delete(course)
+        db.commit()
+        msg = f"Modalidade '{course.nome}' excluída com sucesso."
+
+    client_ip = request.client.host if request.client else None
+    registrar_auditoria(
+        db=db,
+        acao="CURSO_EXCLUIDO",
+        entidade="Course",
+        registro_id=str(course_id),
+        detalhes={"acao": msg},
+        usuario=current_user,
+        ip=client_ip
+    )
+    return {"status": "ok", "mensagem": msg}
