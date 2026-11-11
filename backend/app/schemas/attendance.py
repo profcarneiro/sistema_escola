@@ -160,6 +160,7 @@ class AttendanceRecordItem(BaseModel):
     tema_aula: str
     status: str
     motivo_justificativa: Optional[str] = None
+    observacao: Optional[str] = None
 
 
 class ClassAttendanceSummary(BaseModel):
@@ -167,12 +168,17 @@ class ClassAttendanceSummary(BaseModel):
     turma_nome: str
     curso_nome: str
     professor_nome: Optional[str] = None
-    total_aulas: int
-    total_registros: int
-    total_presencas: int
-    total_faltas: int
-    total_justificadas: int
-    taxa_presenca_percentual: float
+    dia_semana: Optional[str] = None
+    horario: Optional[str] = None
+    total_matriculados: int = 0
+    capacidade_maxima: int = 9
+    total_aulas: int = 0
+    total_aulas_registradas: int = 0
+    total_registros: int = 0
+    total_presencas: int = 0
+    total_faltas: int = 0
+    total_justificadas: int = 0
+    taxa_presenca_percentual: float = 100.0
 
 
 class StudentAttendanceReport(BaseModel):
@@ -183,5 +189,7 @@ class StudentAttendanceReport(BaseModel):
     total_presencas: int
     total_faltas: int
     total_justificadas: int
+    total_faltas_justificadas: int = 0
     taxa_presenca_percentual: float
-    registros: list[AttendanceRecordItem]
+    registros: list[AttendanceRecordItem] = []
+    historico: list[AttendanceRecordItem] = []

@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional, Dict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 
 
 class UserRoleEnum(str, Enum):
@@ -12,12 +12,40 @@ class UserRoleEnum(str, Enum):
     PROFESSOR = "Professor"
 
 
+ROLE_MAP: Dict[str, UserRoleEnum] = {
+    "direcao": UserRoleEnum.DIRECAO,
+    "direção": UserRoleEnum.DIRECAO,
+    "admin": UserRoleEnum.DIRECAO,
+    "administrador": UserRoleEnum.DIRECAO,
+    "coordenacao": UserRoleEnum.COORDENACAO,
+    "coordenação": UserRoleEnum.COORDENACAO,
+    "secretaria": UserRoleEnum.SECRETARIA,
+    "recepcao": UserRoleEnum.SECRETARIA,
+    "recepção": UserRoleEnum.SECRETARIA,
+    "atendimento": UserRoleEnum.SECRETARIA,
+    "financeiro": UserRoleEnum.FINANCEIRO,
+    "professor": UserRoleEnum.PROFESSOR,
+    "docente": UserRoleEnum.PROFESSOR,
+}
+
+
 class UserBase(BaseModel):
     nome: str = Field(..., min_length=2, max_length=150, description="Nome completo do usuário")
     email: EmailStr = Field(..., description="E-mail de acesso único")
     role: UserRoleEnum = Field(default=UserRoleEnum.SECRETARIA, description="Perfil de acesso (RBAC)")
     professor_id: Optional[int] = Field(None, description="ID do professor vinculado caso perfil seja Professor")
     ativo: bool = Field(default=True, description="Indica se a conta está ativa")
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalizar_role(cls, v):
+        if isinstance(v, UserRoleEnum):
+            return v
+        if isinstance(v, str):
+            v_clean = v.strip().lower()
+            if v_clean in ROLE_MAP:
+                return ROLE_MAP[v_clean]
+        return v
 
 
 class UserCreate(UserBase):
@@ -31,6 +59,19 @@ class UserUpdate(BaseModel):
     professor_id: Optional[int] = None
     ativo: Optional[bool] = None
     senha: Optional[str] = Field(None, min_length=6, max_length=100)
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalizar_role_update(cls, v):
+        if v is None:
+            return v
+        if isinstance(v, UserRoleEnum):
+            return v
+        if isinstance(v, str):
+            v_clean = v.strip().lower()
+            if v_clean in ROLE_MAP:
+                return ROLE_MAP[v_clean]
+        return v
 
 
 class UserResponse(BaseModel):

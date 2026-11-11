@@ -441,12 +441,22 @@ def get_classes_attendance_summary(
         total_regs = presencas + faltas + justificadas
         taxa = round((presencas / total_regs) * 100, 1) if total_regs > 0 else 100.0
 
+        matriculados = db.query(Matricula).filter(
+            Matricula.turma_id == turma.id,
+            Matricula.status.in_([StatusMatricula.ATIVA.value, StatusMatricula.EXPERIMENTAL.value])
+        ).count()
+
         res.append(ClassAttendanceSummary(
             turma_id=turma.id,
             turma_nome=turma.nome,
             curso_nome=turma.curso.nome if turma.curso else "Sem curso",
             professor_nome=turma.professor.nome if turma.professor else "Sem professor",
+            dia_semana=turma.dia_semana,
+            horario=f"{turma.horario_inicio}-{turma.horario_fim}",
+            total_matriculados=matriculados,
+            capacidade_maxima=turma.capacidade_maxima,
             total_aulas=len(lessons),
+            total_aulas_registradas=len(lessons),
             total_registros=total_regs,
             total_presencas=presencas,
             total_faltas=faltas,
@@ -498,7 +508,8 @@ def get_student_attendance_history(
             turma_nome=turma_nome,
             tema_aula=tema,
             status=att.status,
-            motivo_justificativa=att.motivo_justificativa
+            motivo_justificativa=att.motivo_justificativa,
+            observacao=att.motivo_justificativa
         ))
 
     # Ordenar registros por data decrescente
@@ -514,6 +525,8 @@ def get_student_attendance_history(
         total_presencas=presencas,
         total_faltas=faltas,
         total_justificadas=justificadas,
+        total_faltas_justificadas=justificadas,
         taxa_presenca_percentual=taxa,
-        registros=registros
+        registros=registros,
+        historico=registros
     )

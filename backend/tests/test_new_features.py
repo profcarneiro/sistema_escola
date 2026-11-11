@@ -199,6 +199,10 @@ def test_relatorio_frequencia_turmas_e_alunos(client, admin_token):
     assert rep_classes.status_code == 200
     classes_summary = rep_classes.json()
     assert any(c["turma_id"] == turma_id for c in classes_summary)
+    turma_item = next(c for c in classes_summary if c["turma_id"] == turma_id)
+    assert turma_item["total_matriculados"] == 1
+    assert turma_item["capacidade_maxima"] == 9
+    assert "QUARTA" in turma_item["dia_semana"]
 
     # Relatório do aluno
     rep_student = client.get(f"/api/v1/attendance/reports/student-history?aluno_id={aluno_id}", headers=headers)
@@ -207,10 +211,26 @@ def test_relatorio_frequencia_turmas_e_alunos(client, admin_token):
     assert student_summary["aluno_id"] == aluno_id
     assert student_summary["total_presencas"] == 1
     assert student_summary["taxa_presenca_percentual"] == 100.0
+    # Verifica compatibilidade dos campos registros e historico
+    assert "registros" in student_summary and len(student_summary["registros"]) == 1
+    assert "historico" in student_summary and len(student_summary["historico"]) == 1
+    assert student_summary["registros"][0]["status"] == "PRESENTE"
 
 
 def test_gerenciamento_usuarios_e_escopo_professor(client, admin_token):
     headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Testa criação de usuário administrador usando formato DIRECAO
+    admin_novo_resp = client.post("/api/v1/users/", json={
+        "nome": "Novo Administrador Geral",
+        "email": "novo.admin@teste.com",
+        "senha": "adminSenhaSegura123",
+        "role": "DIRECAO",
+        "ativo": True
+    }, headers=headers)
+    assert admin_novo_resp.status_code == 201
+    assert admin_novo_resp.json()["role"] == "Direção"
+
     # Cria professor
     prof_resp = client.post("/api/v1/teachers/", json={
         "nome": "Professor Escopo",

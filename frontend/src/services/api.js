@@ -39,7 +39,23 @@ export async function request(endpoint, options = {}) {
   if (contentType && contentType.includes('application/json')) {
     const data = await response.json();
     if (!response.ok) {
-      throw new Error(data.detail || 'Ocorreu um erro na requisição.');
+      let errorMsg = 'Ocorreu um erro na requisição.';
+      if (typeof data.detail === 'string') {
+        errorMsg = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        errorMsg = data.detail
+          .map(d => {
+            if (typeof d === 'string') return d;
+            const field = d.loc ? d.loc[d.loc.length - 1] : '';
+            return field && field !== 'body' ? `${field}: ${d.msg}` : (d.msg || JSON.stringify(d));
+          })
+          .join('; ');
+      } else if (data.detail && typeof data.detail === 'object') {
+        errorMsg = data.detail.msg || data.detail.message || JSON.stringify(data.detail);
+      } else if (data.message) {
+        errorMsg = data.message;
+      }
+      throw new Error(errorMsg);
     }
     return data;
   }
