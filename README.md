@@ -59,7 +59,7 @@ O sistema foi concebido para atender às dores centrais levantadas no briefing c
 ### 6. Comunicação e Backup Local
 - **Links para WhatsApp**: Geração de URLs `wa.me` com mensagens pré-formatadas para lembretes de cobrança com chave PIX, boas-vindas e comunicados.
 - **Relatórios**: Dashboard executivo com ocupação de salas e exportação de dados em CSV (`alunos_helena_barufaldi.csv` e `financeiro_helena_barufaldi.csv`).
-- **Backup Local**: Snapshot atômico do banco de dados na pasta `backups/` com download facilitado para pendrive.
+- **Backup Local e Remoto (Supabase Storage)**: Snapshot atômico do banco SQLite na pasta `backups/` com download para pendrive e sincronização opcional/manual em bucket privado no **Supabase Storage** (via HTTPS com Service Role Key).
 
 ---
 
@@ -230,10 +230,10 @@ A aplicação conta com uma interface moderna, responsiva e totalmente dinâmica
    - **Botão WhatsApp Direto (`wa.me`)** para envio de cobrança amigável via celular ou WhatsApp Web.
 9. **Módulo de Usuários & Acessos:**
    - Gerenciamento de usuários (Direção, Coordenação, Secretaria, Financeiro e Professor) com vínculo ao cadastro docente.
-10. **Módulo de Backup Local:**
-   - Botão para criação instantânea de snapshot atômico do banco de dados SQLite.
-   - Tabela de histórico de backups com tamanho em MB e data/hora.
-   - Link de download direto de arquivos `.db` para pendrive da escola.
+10. **Módulo de Backup Local e Remoto (Supabase):**
+   - Criação instantânea de snapshot atômico do banco de dados SQLite com download direto de arquivos `.db` para pendrive.
+   - Configuração integrada do **Supabase Storage** (URL do projeto, Service Role Key, bucket privado e envio automático opcional).
+   - Envio de snapshots locais para a nuvem, listagem dos arquivos remotos, download direto e cópia de volta para a pasta local (`Copiar p/ Local`).
 
 ---
 
@@ -273,6 +273,9 @@ Para rodar testes de um módulo específico:
 # Testes de novas funcionalidades (filtros financeiros, sincronização de parcelas, usuários e relatórios)
 PYTHONPATH=backend pytest backend/tests/test_new_features.py -v
 
+# Testes de backup remoto (Supabase Storage)
+PYTHONPATH=backend pytest backend/tests/test_remote_backup.py -v
+
 # Testes financeiros (formas de pagamento, lote, DRE, inadimplência)
 PYTHONPATH=backend pytest backend/tests/test_financial.py -v
 
@@ -302,8 +305,16 @@ Conforme o requisito de **servidor local** da Escola de Artes:
   sqlite3 escola_artes.db ".backup backups/backup_manual.db"
   ```
 - Para gerar via interface Web:
-  - Acesse o menu **"Backups"** e clique no botão **"Criar Backup Agora"**.
-- Os backups são armazenados na pasta `backups/` e podem ser copiados para pendrives ou discos externos.
+  - Acesse o menu **"Backups"** e clique em **"Criar Snapshot Agora"** (local) ou **"Gerar e Enviar p/ Supabase"** (remoto).
+- Para configurar o **Backup Remoto (Supabase Storage)** via variáveis de ambiente (`.env`) ou pela própria interface Web (aba **Backups**):
+  ```env
+  SUPABASE_URL=https://seu-projeto.supabase.co
+  SUPABASE_SERVICE_ROLE_KEY=sua_service_role_key
+  SUPABASE_BACKUP_BUCKET=backups
+  SUPABASE_BACKUP_PREFIX=escola-artes
+  SUPABASE_AUTO_BACKUP_ON_LOCAL=false
+  ```
+- Os backups locais são armazenados na pasta `backups/` e os remotos ficam protegidos em bucket privado (`public: false`) no Supabase Storage.
 
 ---
 

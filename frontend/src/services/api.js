@@ -68,6 +68,38 @@ export async function request(endpoint, options = {}) {
   return response.text();
 }
 
+async function downloadBlob(endpoint, fallbackFilename) {
+  const token = authStorage.getToken();
+  const response = await fetch(`${API_BASE}${endpoint}`, {
+    headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+  });
+
+  if (response.status === 401) {
+    authStorage.clear();
+    window.location.reload();
+    throw new Error('Sessão expirada. Por favor faça login novamente.');
+  }
+
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      const data = await response.json();
+      throw new Error(data.detail || 'Erro ao baixar arquivo.');
+    }
+    throw new Error('Erro ao baixar arquivo.');
+  }
+
+  const blob = await response.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fallbackFilename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 export const api = {
   // Autenticação
   login: (email, senha) => request('/auth/login', {
@@ -145,7 +177,18 @@ export const api = {
   getEnrollmentWelcomeLink: (matriculaId) => request(`/communication/whatsapp-enrollment-welcome/${matriculaId}`, { method: 'POST' }),
   getCustomWhatsAppLink: (data) => request('/communication/whatsapp-custom-link', { method: 'POST', body: JSON.stringify(data) }),
 
-  // Backups
+  // Backups Locais & Remotos (Supabase)
   getBackups: () => request('/backup/list'),
-  createBackup: () => request('/backup/create', { method: 'POST' }),
+  createBackup: (enviarRemoto = null) =>
+    request(`/backup/create${enviarRemoto !== null ? `?enviar_remoto=${enviarRemoto}` : ''}`, { method: 'POST' }),
+  downloadLocalBackup: (filename) => downloadBlob(`/backup/download/${encodeURIComponent(filename)}`, filename),
+  getRemoteBackupStatus: () => request('/backup/remote/status'),
+  saveRemoteBackupConfig: (data) => request('/backup/remote/config', { method: 'PUT', body: JSON.stringify(data) }),
+  testRemoteBackup: () => request('/backup/remote/test', { method: 'POST' }),
+  syncRemoteBackupNow: () => request('/backup/remote/sync-now', { method: 'POST' }),
+  uploadBackupToRemote: (filename) => request(`/backup/remote/upload/${encodeURIComponent(filename)}`, { method: 'POST' }),
+  getRemoteBackups: () => request('/backup/remote/list'),
+  downloadRemoteBackup: (filename) => downloadBlob(`/backup/remote/download/${encodeURIComponent(filename)}`, filename),
+  pullRemoteBackup: (filename) => request(`/backup/remote/pull/${encodeURIComponent(filename)}`, { method: 'POST' }),
+  deleteRemoteBackup: (filename) => request(`/backup/remote/${encodeURIComponent(filename)}`, { method: 'DELETE' }),
 };

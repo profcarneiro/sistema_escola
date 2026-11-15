@@ -4,7 +4,7 @@ import {
   HardDrive, LogOut, Plus, CheckCircle, AlertTriangle, FileText,
   DollarSign, TrendingUp, ShieldCheck, Clock, Download, RefreshCw, X,
   GraduationCap, Check, Edit, Trash2, Briefcase, Phone, Mail, Menu,
-  Search, UserCheck, Shield, ChevronDown, Filter, BarChart2
+  Search, UserCheck, Shield, ChevronDown, Filter, BarChart2, Cloud, Upload
 } from 'lucide-react';
 import { api, authStorage } from './services/api';
 
@@ -28,6 +28,16 @@ export default function App() {
   const [defaulters, setDefaulters] = useState([]);
   const [dre, setDre] = useState(null);
   const [backups, setBackups] = useState([]);
+  const [remoteBackupStatus, setRemoteBackupStatus] = useState(null);
+  const [remoteBackups, setRemoteBackups] = useState([]);
+  const [remoteConfigForm, setRemoteConfigForm] = useState({
+    supabase_url: '',
+    service_role_key: '',
+    bucket: 'backups',
+    prefixo: 'escola-artes',
+    auto_enviar_ao_criar: false,
+  });
+  const [remoteBusy, setRemoteBusy] = useState(false);
 
   // Estados de login
   const [email, setEmail] = useState('');
@@ -148,6 +158,27 @@ export default function App() {
 
       if (activeTab === 'attendance') {
         api.getAttendanceClassesSummary().then(cs => setAttendanceClassesSummary(cs)).catch(() => setAttendanceClassesSummary([]));
+      }
+
+      if (activeTab === 'backups') {
+        api.getRemoteBackupStatus()
+          .then(st => {
+            setRemoteBackupStatus(st);
+            setRemoteConfigForm(prev => ({
+              ...prev,
+              supabase_url: st.supabase_url || prev.supabase_url || '',
+              bucket: st.bucket || 'backups',
+              prefixo: st.prefixo || 'escola-artes',
+              auto_enviar_ao_criar: Boolean(st.auto_enviar_ao_criar),
+              service_role_key: '',
+            }));
+            if (st.configurado) {
+              api.getRemoteBackups().then(rb => setRemoteBackups(rb)).catch(() => setRemoteBackups([]));
+            } else {
+              setRemoteBackups([]);
+            }
+          })
+          .catch(() => setRemoteBackupStatus(null));
       }
 
       // Carrega DRE do mês
@@ -741,14 +772,136 @@ export default function App() {
     }
   };
 
-  // 9. Criar Backup
+  // 9. Backups Locais e Remotos (Supabase)
+  const refreshBackups = async () => {
+    const [bkp, st] = await Promise.all([
+      api.getBackups().catch(() => []),
+      api.getRemoteBackupStatus().catch(() => null),
+    ]);
+    setBackups(bkp);
+    setRemoteBackupStatus(st);
+    if (st?.configurado) {
+      const rb = await api.getRemoteBackups().catch(() => []);
+      setRemoteBackups(rb);
+    } else {
+      setRemoteBackups([]);
+    }
+  };
+
   const handleBackup = async () => {
     try {
-      await api.createBackup();
-      showToast('Backup do banco de dados local gerado com sucesso!');
-      loadDashboardData();
+      const res = await api.createBackup();
+      if (res?.enviado_remoto) {
+        showToast('Backup local gerado e enviado ao Supabase com sucesso!');
+      } else if (res?.remoto_mensagem) {
+        showToast(`Backup local gerado (aviso remoto: ${res.remoto_mensagem})`, 'error');
+      } else {
+        showToast('Backup do banco de dados local gerado com sucesso!');
+      }
+      await refreshBackups();
     } catch (err) {
       showToast(err.message, 'error');
+    }
+  };
+
+  const handleSaveRemoteConfig = async (e) => {
+    e.preventDefault();
+    setRemoteBusy(true);
+    try {
+      const saved = await api.saveRemoteBackupConfig({
+        ...remoteConfigForm,
+        service_role_key: remoteConfigForm.service_role_key || null,
+        testar_conexao: true,
+      });
+      setRemoteBackupStatus(saved);
+      setRemoteConfigForm(prev => ({ ...prev, service_role_key: '' }));
+      showToast('Conexão com Supabase validada e configuração salva!');
+      await refreshBackups();
+    } catch (err) {
+      showToast(err.message || 'Erro ao salvar configuração do Supabase.', 'error');
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  const handleTestRemoteBackup = async () => {
+    setRemoteBusy(true);
+    try {
+      const res = await api.testRemoteBackup();
+      showToast(res.mensagem || 'Conexão com Supabase validada!');
+    } catch (err) {
+      showToast(err.message || 'Falha ao conectar no Supabase.', 'error');
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  const handleSyncRemoteNow = async () => {
+    setRemoteBusy(true);
+    try {
+      const res = await api.syncRemoteBackupNow();
+      showToast(`Snapshot '${res.arquivo}' gerado e enviado ao Supabase!`);
+      await refreshBackups();
+    } catch (err) {
+      showToast(err.message || 'Erro ao enviar backup para o Supabase.', 'error');
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  const handleUploadToRemote = async (filename) => {
+    setRemoteBusy(true);
+    try {
+      await api.uploadBackupToRemote(filename);
+      showToast(`Arquivo '${filename}' enviado ao Supabase!`);
+      await refreshBackups();
+    } catch (err) {
+      showToast(err.message || 'Erro ao enviar backup.', 'error');
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  const handlePullFromRemote = async (filename) => {
+    setRemoteBusy(true);
+    try {
+      await api.pullRemoteBackup(filename);
+      showToast(`Backup '${filename}' copiado do Supabase para a pasta local!`);
+      await refreshBackups();
+    } catch (err) {
+      showToast(err.message || 'Erro ao copiar backup do Supabase.', 'error');
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  const handleDeleteRemoteBackup = async (filename) => {
+    if (!window.confirm(`Remover o backup remoto '${filename}' do Supabase?`)) return;
+    setRemoteBusy(true);
+    try {
+      await api.deleteRemoteBackup(filename);
+      showToast(`Backup remoto '${filename}' excluído do Supabase.`);
+      await refreshBackups();
+    } catch (err) {
+      showToast(err.message || 'Erro ao excluir backup remoto.', 'error');
+    } finally {
+      setRemoteBusy(false);
+    }
+  };
+
+  const handleDownloadLocalBackup = async (filename) => {
+    try {
+      await api.downloadLocalBackup(filename);
+    } catch (err) {
+      showToast(err.message || 'Erro ao baixar backup local.', 'error');
+    }
+  };
+
+  const handleDownloadRemoteBackup = async (filename) => {
+    try {
+      await api.downloadRemoteBackup(filename);
+    } catch (err) {
+      showToast(err.message || 'Erro ao baixar backup remoto.', 'error');
     }
   };
 
@@ -2364,40 +2517,221 @@ export default function App() {
 
           {/* TAB 10: BACKUPS */}
           {activeTab === 'backups' && (
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-bold text-slate-800 text-lg">Backups Locais do Banco de Dados SQLite</h3>
-                  <p className="text-xs text-slate-500">Requisito do briefing: Disponibilidade e rotina de recuperação local.</p>
+            <div className="space-y-6">
+              {/* Backups Locais */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h3 className="font-bold text-slate-800 text-lg">Backups Locais do Banco de Dados SQLite</h3>
+                    <p className="text-xs text-slate-500">Snapshots atômicos armazenados no servidor local para recuperação rápida ou cópia em pendrive.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+                    <button
+                      onClick={handleBackup}
+                      disabled={remoteBusy}
+                      className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow disabled:opacity-50"
+                    >
+                      <HardDrive className="w-4 h-4" /> Criar Snapshot Agora
+                    </button>
+                    {remoteBackupStatus?.configurado && (
+                      <button
+                        onClick={handleSyncRemoteNow}
+                        disabled={remoteBusy}
+                        className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition flex items-center gap-1.5 shadow disabled:opacity-50"
+                      >
+                        <Cloud className="w-4 h-4" /> Gerar e Enviar p/ Supabase
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <button
-                  onClick={handleBackup}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
-                >
-                  <HardDrive className="w-4 h-4" /> Criar Snapshot Agora
-                </button>
+
+                <div className="space-y-3">
+                  {backups.length === 0 ? (
+                    <p className="text-xs text-slate-400 py-4 text-center">Nenhum snapshot local gerado ainda.</p>
+                  ) : backups.map((b, i) => (
+                    <div key={i} className="p-4 rounded-xl border border-slate-100 bg-slate-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-slate-800 text-sm">{b.arquivo}</p>
+                        <span className="text-xs text-slate-400">Criado em: {new Date(b.criado_em).toLocaleString('pt-BR')}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2 py-1 rounded">{b.tamanho_formatado}</span>
+                        {remoteBackupStatus?.configurado && (
+                          <button
+                            onClick={() => handleUploadToRemote(b.arquivo)}
+                            disabled={remoteBusy}
+                            className="px-2.5 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg transition inline-flex items-center gap-1 disabled:opacity-50"
+                            title="Enviar este snapshot para o Supabase"
+                          >
+                            <Upload className="w-3.5 h-3.5" /> Enviar p/ Nuvem
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDownloadLocalBackup(b.arquivo)}
+                          className="p-2 text-slate-600 hover:text-amber-800 bg-white border border-slate-200 rounded-lg transition"
+                          title="Download para pendrive"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
-              <div className="space-y-3">
-                {backups.map((b, i) => (
-                  <div key={i} className="p-4 rounded-xl border border-slate-100 bg-slate-50 flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-slate-800 text-sm">{b.arquivo}</p>
-                      <span className="text-xs text-slate-400">Criado em: {new Date(b.criado_em).toLocaleString('pt-BR')}</span>
+              {/* Backup Remoto em Nuvem (Supabase Storage) */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Cloud className="w-5 h-5 text-emerald-600" />
+                      <h3 className="font-bold text-slate-800 text-lg">Backup Remoto em Nuvem (Supabase Storage)</h3>
+                      <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                        remoteBackupStatus?.configurado ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {remoteBackupStatus?.configurado ? '✓ Conectado' : 'Não configurado'}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2 py-1 rounded">{b.tamanho_formatado}</span>
-                      <a
-                        href={`/api/v1/backup/download/${b.arquivo}`}
-                        download
-                        className="p-2 text-slate-600 hover:text-amber-800 transition"
-                        title="Download para pendrive"
-                      >
-                        <Download className="w-4 h-4" />
-                      </a>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Envie cópias criptografadas em trânsito para um bucket privado no Supabase para proteção contra falhas físicas no computador local.
+                    </p>
+                  </div>
+                  {remoteBackupStatus?.configurado && (
+                    <button
+                      type="button"
+                      onClick={handleTestRemoteBackup}
+                      disabled={remoteBusy}
+                      className="px-3 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition inline-flex items-center gap-1.5 self-start sm:self-auto disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${remoteBusy ? 'animate-spin' : ''}`} /> Testar Conexão
+                    </button>
+                  )}
+                </div>
+
+                {/* Formulário de Configuração do Supabase */}
+                <form onSubmit={handleSaveRemoteConfig} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">URL do Projeto Supabase</label>
+                      <input
+                        type="url"
+                        required
+                        placeholder="https://seu-projeto.supabase.co"
+                        value={remoteConfigForm.supabase_url}
+                        onChange={(e) => setRemoteConfigForm(prev => ({ ...prev, supabase_url: e.target.value }))}
+                        className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">
+                        Service Role Key {remoteBackupStatus?.chave_mascarada ? `(Atual: ${remoteBackupStatus.chave_mascarada})` : ''}
+                      </label>
+                      <input
+                        type="password"
+                        required={!remoteBackupStatus?.configurado}
+                        placeholder={remoteBackupStatus?.configurado ? 'Deixe em branco para manter a chave atual' : 'eyJhbGciOi... (service_role)'}
+                        value={remoteConfigForm.service_role_key}
+                        onChange={(e) => setRemoteConfigForm(prev => ({ ...prev, service_role_key: e.target.value }))}
+                        className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                      />
                     </div>
                   </div>
-                ))}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Bucket Privado</label>
+                      <input
+                        type="text"
+                        required
+                        value={remoteConfigForm.bucket}
+                        onChange={(e) => setRemoteConfigForm(prev => ({ ...prev, bucket: e.target.value }))}
+                        className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">Pasta / Prefixo</label>
+                      <input
+                        type="text"
+                        value={remoteConfigForm.prefixo}
+                        onChange={(e) => setRemoteConfigForm(prev => ({ ...prev, prefixo: e.target.value }))}
+                        className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                    <label className="inline-flex items-center gap-2 text-xs text-slate-700 font-medium cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={remoteConfigForm.auto_enviar_ao_criar}
+                        onChange={(e) => setRemoteConfigForm(prev => ({ ...prev, auto_enviar_ao_criar: e.target.checked }))}
+                        className="rounded text-emerald-600"
+                      />
+                      Enviar automaticamente para o Supabase sempre que um snapshot local for criado
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={remoteBusy}
+                      className="px-4 py-2 text-xs font-semibold text-white bg-slate-800 hover:bg-slate-900 rounded-lg transition self-start sm:self-auto disabled:opacity-50"
+                    >
+                      {remoteBusy ? 'Validando...' : 'Salvar e Validar Supabase'}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Lista de Backups no Supabase */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Snapshots Armazenados na Nuvem ({remoteBackups.length})
+                  </h4>
+                  {!remoteBackupStatus?.configurado ? (
+                    <p className="text-xs text-slate-400 italic py-2">
+                      Configure a URL e a Service Role Key do Supabase acima (ou via variáveis de ambiente) para habilitar o armazenamento remoto.
+                    </p>
+                  ) : remoteBackups.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic py-2">
+                      Nenhum snapshot encontrado no bucket '{remoteBackupStatus.bucket}'. Clique em "Gerar e Enviar p/ Supabase" ou envie um backup local acima.
+                    </p>
+                  ) : (
+                    remoteBackups.map((rb, idx) => (
+                      <div key={idx} className="p-4 rounded-xl border border-emerald-100 bg-emerald-50/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <p className="font-semibold text-slate-800 text-sm">{rb.arquivo}</p>
+                          <span className="text-xs text-slate-500 block">
+                            Caminho: {rb.caminho_remoto}
+                            {rb.criado_em ? ` • Enviado em: ${new Date(rb.criado_em).toLocaleString('pt-BR')}` : ''}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-emerald-800 bg-emerald-100 px-2 py-1 rounded">{rb.tamanho_formatado}</span>
+                          <button
+                            onClick={() => handlePullFromRemote(rb.arquivo)}
+                            disabled={remoteBusy}
+                            className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition disabled:opacity-50"
+                            title="Copiar snapshot do Supabase para backups locais"
+                          >
+                            Copiar p/ Local
+                          </button>
+                          <button
+                            onClick={() => handleDownloadRemoteBackup(rb.arquivo)}
+                            className="p-2 text-slate-600 hover:text-emerald-700 bg-white border border-slate-200 rounded-lg transition"
+                            title="Baixar snapshot da nuvem"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRemoteBackup(rb.arquivo)}
+                            disabled={remoteBusy}
+                            className="p-2 text-slate-500 hover:text-red-600 bg-white border border-slate-200 rounded-lg transition disabled:opacity-50"
+                            title="Excluir snapshot remoto"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
               </div>
             </div>
           )}

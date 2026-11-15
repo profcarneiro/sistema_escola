@@ -57,8 +57,9 @@ yarn-error.log*
 *.sqlite
 *.sqlite3
 
-# Preserva a pasta de backups locais ignorando os snapshots .db
+# Preserva a pasta de backups locais ignorando os snapshots .db e credenciais locais
 backups/*.db
+backups/.supabase_config.json
 !backups/.gitkeep
 
 # --- Variáveis de Ambiente e Segredos ---

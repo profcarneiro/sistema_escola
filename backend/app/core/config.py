@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_PASSWORD: str = "admin123"
     FIRST_SUPERUSER_NAME: str = "Helena Barufaldi (Direção)"
 
+    # Backup Remoto (Supabase Storage)
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_BACKUP_BUCKET: str = "backups"
+    SUPABASE_BACKUP_PREFIX: str = "escola-artes"
+    SUPABASE_AUTO_BACKUP_ON_LOCAL: bool = False
+
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=True,
