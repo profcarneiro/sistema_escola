@@ -138,7 +138,7 @@ export const api = {
   syncEnrollmentInvoices: () => request('/financial/invoices/sync-enrollments', { method: 'POST' }),
   getDefaulters: () => request('/financial/defaulters'),
   getCashFlow: (inicio, fim) => request(`/financial/cash-flow?data_inicio=${inicio}&data_fim=${fim}`),
-  getDRE: (inicio, fim) => request(`/financial/dre?competencia_inicio=${inicio}&competencia_fim=${fim}`),
+  getDRE: (inicio, fim, alunoId = null) => request(`/financial/dre?competencia_inicio=${inicio}&competencia_fim=${fim}${alunoId ? `&aluno_id=${alunoId}` : ''}`),
 
   // WhatsApp
   getInvoiceReminderLink: (invoiceId) => request(`/communication/whatsapp-invoice-reminder/${invoiceId}`, { method: 'POST' }),

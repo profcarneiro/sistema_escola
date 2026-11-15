@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from app.core.audit import registrar_auditoria
 from app.database import get_db
@@ -204,8 +204,12 @@ def sync_enrollments_invoices(
 @router.get("/invoices", response_model=List[InvoiceResponse], summary="Listar títulos e mensalidades")
 def list_invoices(
     aluno_id: Optional[int] = Query(None, description="Filtrar por aluno"),
+    responsavel_id: Optional[int] = Query(None, description="Filtrar por responsável"),
     status_filter: Optional[StatusTitulo] = Query(None, alias="status", description="Filtrar por status"),
     competencia: Optional[str] = Query(None, description="Filtrar por competência YYYY-MM"),
+    mes: Optional[int] = Query(None, ge=1, le=12, description="Filtrar por mês (1-12)"),
+    ano: Optional[int] = Query(None, ge=2000, le=2100, description="Filtrar por ano (YYYY)"),
+    busca: Optional[str] = Query(None, description="Buscar por nome do aluno, responsável ou descrição"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
@@ -216,10 +220,27 @@ def list_invoices(
     )
     if aluno_id:
         query = query.filter(Invoice.aluno_id == aluno_id)
+    if responsavel_id:
+        query = query.filter(Invoice.responsavel_id == responsavel_id)
     if status_filter:
         query = query.filter(Invoice.status == status_filter.value)
     if competencia:
         query = query.filter(Invoice.competencia == competencia)
+    if ano is not None and mes is not None:
+        query = query.filter(Invoice.competencia == f"{ano:04d}-{mes:02d}")
+    elif ano is not None:
+        query = query.filter(Invoice.competencia.like(f"{ano:04d}-%"))
+    elif mes is not None:
+        query = query.filter(Invoice.competencia.like(f"%-{mes:02d}"))
+    if busca and busca.strip():
+        termo = f"%{busca.strip()}%"
+        query = query.outerjoin(Invoice.aluno).outerjoin(Invoice.responsavel).filter(
+            or_(
+                Invoice.descricao.ilike(termo),
+                Aluno.nome.ilike(termo),
+                Responsavel.nome.ilike(termo),
+            )
+        )
 
     invoices = query.order_by(Invoice.data_vencimento.asc()).all()
     today = date.today()
@@ -421,6 +442,7 @@ def get_cash_flow(
 def get_dre(
     competencia_inicio: date = Query(..., description="Data inicial de competência"),
     competencia_fim: date = Query(..., description="Data final de competência"),
+    aluno_id: Optional[int] = Query(None, description="Filtrar receitas do DRE por aluno específico"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.FINANCEIRO.value))
 ):
@@ -432,17 +454,20 @@ def get_dre(
     (-) Despesas Operacionais
     (=) Resultado Líquido do Período
     """
-    faturas = db.query(Invoice).filter(
+    faturas_query = db.query(Invoice).filter(
         Invoice.data_vencimento >= competencia_inicio,
         Invoice.data_vencimento <= competencia_fim,
         Invoice.status != StatusTitulo.CANCELADO.value
-    ).all()
+    )
+    if aluno_id is not None:
+        faturas_query = faturas_query.filter(Invoice.aluno_id == aluno_id)
+    faturas = faturas_query.all()
 
     receita_bruta = sum(f.valor_nominal for f in faturas)
     deducoes_descontos = sum(f.desconto_aplicado for f in faturas)
     receita_liquida = sum(f.valor_final for f in faturas)
 
-    despesas = db.query(Expense).filter(
+    despesas = [] if aluno_id is not None else db.query(Expense).filter(
         Expense.data_competencia >= competencia_inicio,
         Expense.data_competencia <= competencia_fim
     ).all()

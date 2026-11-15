@@ -358,3 +358,104 @@ def test_converter_experimental_para_ativa_e_sincronizar_parcelas(client, admin_
     all_invs = client.get("/api/v1/financial/invoices", headers=headers)
     assert all_invs.status_code == 200
     assert len(all_invs.json()) == 6
+
+
+def test_filtros_financeiro_mes_ano_aluno_responsavel_e_dre(client, admin_token):
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Cria aluno menor com responsável financeiro
+    aluno1_resp = client.post("/api/v1/students/", json={
+        "nome": "Lucas Filtro",
+        "data_nascimento": "2012-06-10",
+        "responsavel": {
+            "nome": "Mariana Responsavel",
+            "cpf": "321.321.321-00",
+            "telefone": "(19) 99999-1111",
+            "email": "mariana.resp@teste.com",
+            "endereco": "Rua das Artes, 100 - Nova Odessa/SP"
+        }
+    }, headers=headers)
+    assert aluno1_resp.status_code == 201
+    aluno1 = aluno1_resp.json()
+    aluno1_id = aluno1["id"]
+    resp1_id = aluno1["responsavel"]["id"]
+
+    aluno2_resp = client.post("/api/v1/students/", json={
+        "nome": "Carla Outro",
+        "data_nascimento": "1995-03-10",
+        "cpf": "45645645600"
+    }, headers=headers)
+    assert aluno2_resp.status_code == 201
+    aluno2_id = aluno2_resp.json()["id"]
+
+    curso_id = client.post("/api/v1/courses/", json={
+        "nome": "Curso Filtro DRE",
+        "duracao_meses": 12,
+        "valor_mensalidade": 400.0
+    }, headers=headers).json()["id"]
+    sala_id = client.post("/api/v1/rooms/", json={"nome": "Sala Filtro", "capacidade": 9}, headers=headers).json()["id"]
+    prof_id = client.post("/api/v1/teachers/", json={"nome": "Prof Filtro", "email": "prof.filtro@teste.com"}, headers=headers).json()["id"]
+    turma_id = client.post("/api/v1/classes/", json={
+        "nome": "Turma Filtro",
+        "curso_id": curso_id,
+        "sala_id": sala_id,
+        "professor_id": prof_id,
+        "dia_semana": "SEGUNDA",
+        "turno": "TARDE",
+        "horario_inicio": "14:00",
+        "horario_fim": "16:00",
+        "capacidade_maxima": 9,
+        "faixa_etaria": "LIVRE"
+    }, headers=headers).json()["id"]
+
+    # Matricula aluno1 em 2026-03 (3 parcelas: 2026-03, 2026-04, 2026-05)
+    client.post("/api/v1/enrollments/", json={
+        "aluno_id": aluno1_id,
+        "turma_id": turma_id,
+        "data_matricula": "2026-03-01",
+        "data_inicio": "2026-03-01",
+        "valor_mensalidade": 400.0,
+        "dia_vencimento": 10,
+        "quantidade_parcelas": 3,
+        "aula_experimental": False
+    }, headers=headers)
+
+    # Matricula aluno2 em 2027-03 (2 parcelas: 2027-03, 2027-04)
+    client.post("/api/v1/enrollments/", json={
+        "aluno_id": aluno2_id,
+        "turma_id": turma_id,
+        "data_matricula": "2027-03-01",
+        "data_inicio": "2027-03-01",
+        "valor_mensalidade": 400.0,
+        "dia_vencimento": 10,
+        "quantidade_parcelas": 2,
+        "aula_experimental": False
+    }, headers=headers)
+
+    # Filtro por mês=3 (ambos anos: 2026-03 e 2027-03)
+    res_mes = client.get("/api/v1/financial/invoices?mes=3", headers=headers)
+    assert res_mes.status_code == 200
+    assert len(res_mes.json()) == 2
+
+    # Filtro por ano=2026 e mes=4
+    res_mes_ano = client.get("/api/v1/financial/invoices?ano=2026&mes=4", headers=headers)
+    assert res_mes_ano.status_code == 200
+    assert len(res_mes_ano.json()) == 1
+    assert res_mes_ano.json()[0]["competencia"] == "2026-04"
+
+    # Filtro por responsavel_id e busca pelo nome da responsável
+    res_resp = client.get(f"/api/v1/financial/invoices?responsavel_id={resp1_id}", headers=headers)
+    assert res_resp.status_code == 200
+    assert len(res_resp.json()) == 3
+
+    res_busca = client.get("/api/v1/financial/invoices?busca=Mariana", headers=headers)
+    assert res_busca.status_code == 200
+    assert len(res_busca.json()) == 3
+
+    # DRE filtrado por aluno_id
+    dre_aluno = client.get(
+        f"/api/v1/financial/dre?competencia_inicio=2026-01-01&competencia_fim=2026-12-31&aluno_id={aluno1_id}",
+        headers=headers
+    )
+    assert dre_aluno.status_code == 200
+    assert dre_aluno.json()["receita_liquida"] == 1200.0

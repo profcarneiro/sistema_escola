@@ -60,9 +60,13 @@ export default function App() {
   const [userFormRole, setUserFormRole] = useState('Direção');
   const [modalError, setModalError] = useState('');
 
-  // Filtros Financeiro
+  // Filtros Financeiro & DRE
   const [invoiceFilter, setInvoiceFilter] = useState('TODAS');
   const [invoiceSearch, setInvoiceSearch] = useState('');
+  const [invoiceMonthFilter, setInvoiceMonthFilter] = useState('TODOS');
+  const [invoiceYearFilter, setInvoiceYearFilter] = useState('TODOS');
+  const [invoiceStudentFilter, setInvoiceStudentFilter] = useState('TODOS');
+  const [financialDre, setFinancialDre] = useState(null);
 
   // Sub-abas e relatórios de Frequência / Diário
   const [attendanceSubTab, setAttendanceSubTab] = useState('chamada'); // 'chamada' | 'turmas' | 'aluno'
@@ -162,6 +166,38 @@ export default function App() {
       loadDashboardData();
     }
   }, [token, activeTab]);
+
+  // Atualiza DRE filtrado por mês, ano e aluno na aba Financeiro
+  useEffect(() => {
+    if (!token || activeTab !== 'financial') return;
+    const hoje = new Date();
+    const currentYear = hoje.getFullYear();
+    const targetYear = invoiceYearFilter !== 'TODOS' ? parseInt(invoiceYearFilter, 10) : currentYear;
+
+    let inicio;
+    let fim;
+    if (invoiceMonthFilter !== 'TODOS') {
+      const targetMonth = parseInt(invoiceMonthFilter, 10);
+      const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+      const mm = String(targetMonth).padStart(2, '0');
+      inicio = `${targetYear}-${mm}-01`;
+      fim = `${targetYear}-${mm}-${String(lastDay).padStart(2, '0')}`;
+    } else if (invoiceYearFilter !== 'TODOS') {
+      inicio = `${targetYear}-01-01`;
+      fim = `${targetYear}-12-31`;
+    } else {
+      const currMonth = hoje.getMonth() + 1;
+      const lastDay = new Date(currentYear, currMonth, 0).getDate();
+      const mm = String(currMonth).padStart(2, '0');
+      inicio = `${currentYear}-${mm}-01`;
+      fim = `${currentYear}-${mm}-${String(lastDay).padStart(2, '0')}`;
+    }
+
+    const alunoId = invoiceStudentFilter !== 'TODOS' ? invoiceStudentFilter : null;
+    api.getDRE(inicio, fim, alunoId)
+      .then(data => setFinancialDre(data))
+      .catch(() => setFinancialDre(null));
+  }, [token, activeTab, invoiceMonthFilter, invoiceYearFilter, invoiceStudentFilter, invoices.length]);
 
   // Se selecionar aluno para histórico de frequência
   useEffect(() => {
@@ -1559,23 +1595,157 @@ export default function App() {
           )}
 
           {/* TAB 8: FINANCEIRO & DRE */}
-          {activeTab === 'financial' && (
+          {activeTab === 'financial' && (() => {
+            const mesesNomes = [
+              { id: '01', label: 'Janeiro' }, { id: '02', label: 'Fevereiro' }, { id: '03', label: 'Março' },
+              { id: '04', label: 'Abril' }, { id: '05', label: 'Maio' }, { id: '06', label: 'Junho' },
+              { id: '07', label: 'Julho' }, { id: '08', label: 'Agosto' }, { id: '09', label: 'Setembro' },
+              { id: '10', label: 'Outubro' }, { id: '11', label: 'Novembro' }, { id: '12', label: 'Dezembro' },
+            ];
+
+            const getInvYearMonth = (item) => {
+              if (item.competencia && item.competencia.includes('-')) {
+                const [y, m] = item.competencia.split('-');
+                return { y, m };
+              }
+              const parts = String(item.data_vencimento || '').split('T')[0].split('-');
+              return { y: parts[0] || '', m: parts[1] || '' };
+            };
+
+            const currentYearStr = String(new Date().getFullYear());
+            const yearsSet = new Set([currentYearStr]);
+            invoices.forEach(inv => {
+              const { y } = getInvYearMonth(inv);
+              if (y) yearsSet.add(y);
+            });
+            const availableYears = Array.from(yearsSet).sort();
+
+            const studentOptionsMap = new Map();
+            students.forEach(s => {
+              studentOptionsMap.set(String(s.id), {
+                id: String(s.id),
+                nome: s.nome,
+                responsavel: s.responsavel?.nome || null,
+              });
+            });
+            invoices.forEach(inv => {
+              const sid = String(inv.aluno_id);
+              if (!studentOptionsMap.has(sid)) {
+                studentOptionsMap.set(sid, {
+                  id: sid,
+                  nome: inv.aluno_nome || `Aluno #${sid}`,
+                  responsavel: inv.responsavel_nome || null,
+                });
+              } else if (!studentOptionsMap.get(sid).responsavel && inv.responsavel_nome) {
+                studentOptionsMap.get(sid).responsavel = inv.responsavel_nome;
+              }
+            });
+            const studentGuardianOptions = Array.from(studentOptionsMap.values()).sort((a, b) =>
+              a.nome.localeCompare(b.nome, 'pt-BR')
+            );
+
+            const matchesCommonFilters = (item) => {
+              const { y, m } = getInvYearMonth(item);
+              if (invoiceYearFilter !== 'TODOS' && y !== invoiceYearFilter) return false;
+              if (invoiceMonthFilter !== 'TODOS' && m !== invoiceMonthFilter) return false;
+              if (invoiceStudentFilter !== 'TODOS' && String(item.aluno_id) !== invoiceStudentFilter) return false;
+              if (invoiceSearch.trim()) {
+                const q = invoiceSearch.toLowerCase();
+                const matchAluno = item.aluno_nome?.toLowerCase().includes(q);
+                const matchResp = item.responsavel_nome?.toLowerCase().includes(q);
+                const matchDesc = item.descricao?.toLowerCase().includes(q);
+                if (!matchAluno && !matchResp && !matchDesc) return false;
+              }
+              return true;
+            };
+
+            const baseFilteredInvoices = invoices.filter(matchesCommonFilters);
+            const filteredInvoices = baseFilteredInvoices.filter(inv =>
+              invoiceFilter === 'TODAS' ? true : inv.status === invoiceFilter
+            );
+            const filteredDefaulters = defaulters.filter(matchesCommonFilters);
+
+            const totalFiltrado = filteredInvoices.reduce((acc, i) => acc + (i.valor_final || 0), 0);
+            const totalPago = filteredInvoices.filter(i => i.status === 'PAGO').reduce((acc, i) => acc + (i.valor_final || 0), 0);
+            const totalAberto = filteredInvoices.filter(i => i.status !== 'PAGO' && i.status !== 'CANCELADO').reduce((acc, i) => acc + (i.valor_final || 0), 0);
+            const hasActiveFilters = invoiceFilter !== 'TODAS' || invoiceMonthFilter !== 'TODOS' || invoiceYearFilter !== 'TODOS' || invoiceStudentFilter !== 'TODOS' || invoiceSearch.trim() !== '';
+
+            const activeDre = financialDre || dre;
+            const dreMonthLabel = invoiceMonthFilter !== 'TODOS'
+              ? mesesNomes.find(m => m.id === invoiceMonthFilter)?.label
+              : null;
+            const drePeriodLabel = dreMonthLabel && invoiceYearFilter !== 'TODOS'
+              ? `${dreMonthLabel}/${invoiceYearFilter}`
+              : dreMonthLabel
+              ? `${dreMonthLabel}/${currentYearStr}`
+              : invoiceYearFilter !== 'TODOS'
+              ? `Ano ${invoiceYearFilter}`
+              : 'Mês Corrente';
+
+            return (
             <div className="space-y-6">
+              {/* DRE do Período */}
+              {activeDre && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                    <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
+                      <TrendingUp className="w-5 h-5 text-emerald-600" />
+                      DRE Operacional — {drePeriodLabel}
+                      {invoiceStudentFilter !== 'TODOS' && (
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800">
+                          Aluno: {studentOptionsMap.get(invoiceStudentFilter)?.nome}
+                        </span>
+                      )}
+                    </h3>
+                    <span className="text-xs text-slate-400">
+                      Período: {formatDateBR(activeDre.competencia_inicio)} até {formatDateBR(activeDre.competencia_fim)}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-center">
+                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-[11px] text-slate-500 font-semibold uppercase block">Receita Bruta</span>
+                      <span className="text-base font-bold text-slate-800">R$ {Number(activeDre.receita_bruta || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                      <span className="text-[11px] text-slate-500 font-semibold uppercase block">Descontos</span>
+                      <span className="text-base font-bold text-amber-700">- R$ {Number(activeDre.deducoes_descontos || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="p-3 bg-emerald-50/60 rounded-lg border border-emerald-100">
+                      <span className="text-[11px] text-emerald-700 font-semibold uppercase block">Receita Líquida</span>
+                      <span className="text-base font-bold text-emerald-700">R$ {Number(activeDre.receita_liquida || 0).toFixed(2)}</span>
+                    </div>
+                    <div className="p-3 bg-red-50/50 rounded-lg border border-red-100">
+                      <span className="text-[11px] text-red-700 font-semibold uppercase block">Despesas Op.</span>
+                      <span className="text-base font-bold text-red-600">
+                        {invoiceStudentFilter !== 'TODOS' ? '—' : `- R$ ${Number(activeDre.despesas_operacionais || 0).toFixed(2)}`}
+                      </span>
+                    </div>
+                    <div className="p-3 bg-slate-900 rounded-lg text-white col-span-2 md:col-span-1">
+                      <span className="text-[11px] text-slate-300 font-semibold uppercase block">Resultado Líquido</span>
+                      <span className="text-base font-bold text-emerald-400">R$ {Number(activeDre.resultado_liquido || 0).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Inadimplentes */}
-              {defaulters.length > 0 && (
+              {filteredDefaulters.length > 0 && (
                 <div className="bg-red-50 border border-red-200 rounded-xl p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="font-bold text-red-800 text-base flex items-center gap-2">
                       <AlertTriangle className="w-5 h-5 text-red-600" />
-                      Régua de Cobrança — Títulos Inadimplentes com Multa (2%) e Juros
+                      Régua de Cobrança — Títulos Inadimplentes ({filteredDefaulters.length})
                     </h3>
                   </div>
                   <div className="space-y-2">
-                    {defaulters.map((def) => (
-                      <div key={def.id} className="bg-white p-4 rounded-lg border border-red-100 shadow-sm flex items-center justify-between">
+                    {filteredDefaulters.map((def) => (
+                      <div key={def.id} className="bg-white p-4 rounded-lg border border-red-100 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div>
                           <span className="font-semibold text-slate-800">{def.aluno_nome}</span>
-                          <span className="text-xs text-slate-500 block">Vencido em: {formatDateBR(def.data_vencimento)}</span>
+                          {def.responsavel_nome && (
+                            <span className="text-xs text-slate-500 ml-2">(Resp: {def.responsavel_nome})</span>
+                          )}
+                          <span className="text-xs text-slate-500 block">Vencido em: {formatDateBR(def.data_vencimento)} • {def.descricao}</span>
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="text-right">
@@ -1620,39 +1790,117 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Filtros rápidos e busca */}
-                <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      { id: 'TODAS', label: `Todas (${invoices.length})` },
-                      { id: 'PENDENTE', label: `Pendentes (${invoices.filter(i => i.status === 'PENDENTE').length})` },
-                      { id: 'ATRASADO', label: `Vencidas (${invoices.filter(i => i.status === 'ATRASADO').length})` },
-                      { id: 'PAGO', label: `Pagas (${invoices.filter(i => i.status === 'PAGO').length})` },
-                    ].map(f => (
-                      <button
-                        key={f.id}
-                        type="button"
-                        onClick={() => setInvoiceFilter(f.id)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                          invoiceFilter === f.id
-                            ? 'bg-amber-700 text-white shadow-sm'
-                            : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                        }`}
+                {/* Filtros por Mês, Ano, Aluno & Responsável, Status e Busca */}
+                <div className="p-4 bg-slate-50 border-b border-slate-200 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">Mês de Competência</label>
+                      <select
+                        value={invoiceMonthFilter}
+                        onChange={(e) => setInvoiceMonthFilter(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-amber-500"
                       >
-                        {f.label}
-                      </button>
-                    ))}
+                        <option value="TODOS">Todos os meses</option>
+                        {mesesNomes.map(m => (
+                          <option key={m.id} value={m.id}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">Ano</label>
+                      <select
+                        value={invoiceYearFilter}
+                        onChange={(e) => setInvoiceYearFilter(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-amber-500"
+                      >
+                        <option value="TODOS">Todos os anos</option>
+                        {availableYears.map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">Aluno & Responsável</label>
+                      <select
+                        value={invoiceStudentFilter}
+                        onChange={(e) => setInvoiceStudentFilter(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-amber-500"
+                      >
+                        <option value="TODOS">Todos os alunos e responsáveis</option>
+                        {studentGuardianOptions.map(opt => (
+                          <option key={opt.id} value={opt.id}>
+                            {opt.nome}{opt.responsavel ? ` (Resp: ${opt.responsavel})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-500 mb-1">Busca Rápida</label>
+                      <div className="relative">
+                        <Search className="w-4 h-4 absolute left-3 top-2 text-slate-400" />
+                        <input
+                          type="text"
+                          value={invoiceSearch}
+                          onChange={(e) => setInvoiceSearch(e.target.value)}
+                          placeholder="Aluno, responsável ou descrição..."
+                          className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-amber-500"
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="relative w-full sm:w-64">
-                    <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                    <input
-                      type="text"
-                      value={invoiceSearch}
-                      onChange={(e) => setInvoiceSearch(e.target.value)}
-                      placeholder="Buscar aluno ou descrição..."
-                      className="w-full pl-9 pr-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs outline-none focus:border-amber-500"
-                    />
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { id: 'TODAS', label: `Todas (${baseFilteredInvoices.length})` },
+                        { id: 'PENDENTE', label: `Pendentes (${baseFilteredInvoices.filter(i => i.status === 'PENDENTE').length})` },
+                        { id: 'ATRASADO', label: `Vencidas (${baseFilteredInvoices.filter(i => i.status === 'ATRASADO').length})` },
+                        { id: 'PAGO', label: `Pagas (${baseFilteredInvoices.filter(i => i.status === 'PAGO').length})` },
+                      ].map(f => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setInvoiceFilter(f.id)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                            invoiceFilter === f.id
+                              ? 'bg-amber-700 text-white shadow-sm'
+                              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <span className="text-slate-600">
+                        Total filtrado: <strong className="text-slate-900">R$ {totalFiltrado.toFixed(2)}</strong>
+                      </span>
+                      <span className="text-emerald-700">
+                        Pago: <strong>R$ {totalPago.toFixed(2)}</strong>
+                      </span>
+                      <span className="text-amber-700">
+                        Em aberto: <strong>R$ {totalAberto.toFixed(2)}</strong>
+                      </span>
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInvoiceFilter('TODAS');
+                            setInvoiceMonthFilter('TODOS');
+                            setInvoiceYearFilter('TODOS');
+                            setInvoiceStudentFilter('TODOS');
+                            setInvoiceSearch('');
+                          }}
+                          className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 bg-white border border-slate-200 hover:bg-slate-100 rounded-lg transition"
+                        >
+                          Limpar filtros
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -1669,27 +1917,13 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {(() => {
-                        const filteredInvoices = invoices.filter(inv => {
-                          if (invoiceFilter !== 'TODAS' && inv.status !== invoiceFilter) return false;
-                          if (invoiceSearch.trim()) {
-                            const q = invoiceSearch.toLowerCase();
-                            const matchAluno = inv.aluno_nome?.toLowerCase().includes(q);
-                            const matchDesc = inv.descricao?.toLowerCase().includes(q);
-                            if (!matchAluno && !matchDesc) return false;
-                          }
-                          return true;
-                        });
-                        if (filteredInvoices.length === 0) {
-                          return (
-                            <tr>
-                              <td colSpan={6} className="px-6 py-10 text-center text-xs text-slate-400">
-                                Nenhuma mensalidade encontrada para este filtro. Caso haja matrículas ativas sem parcelas, clique em <strong>Gerar / Sincronizar Parcelas</strong> acima.
-                              </td>
-                            </tr>
-                          );
-                        }
-                        return filteredInvoices.map((inv) => (
+                      {filteredInvoices.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-6 py-10 text-center text-xs text-slate-400">
+                            Nenhuma mensalidade encontrada para os filtros selecionados. Caso haja matrículas ativas sem parcelas, clique em <strong>Gerar / Sincronizar Parcelas</strong> acima.
+                          </td>
+                        </tr>
+                      ) : filteredInvoices.map((inv) => (
                         <tr key={inv.id} className="hover:bg-slate-50/80 transition">
                           <td className="px-6 py-4 font-medium text-slate-900">
                             <div>{inv.descricao}</div>
@@ -1740,14 +1974,14 @@ export default function App() {
                             )}
                           </td>
                         </tr>
-                        ));
-                      })()}
+                      ))}
                     </tbody>
                   </table>
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* TAB 9: FREQUÊNCIA & DIÁRIO DE CLASSE */}
           {activeTab === 'attendance' && (
