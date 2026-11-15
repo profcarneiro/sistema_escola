@@ -53,6 +53,7 @@ class InvoiceUpdate(BaseModel):
 class InvoiceResponse(InvoiceBase):
     id: int
     responsavel_id: Optional[int] = None
+    valor_nominal: float = Field(..., ge=0.0, description="Valor nominal sem descontos")
     valor_final: float
     data_pagamento: Optional[datetime] = None
     forma_pagamento: Optional[FormaPagamento] = None

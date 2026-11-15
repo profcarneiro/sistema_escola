@@ -21,6 +21,7 @@ from app.schemas.financial import (
     CashFlowSummary, DRESummary
 )
 from app.routers.auth import get_current_active_user, require_roles
+from app.routers.enrollments import gerar_faturas_matricula
 
 router = APIRouter(prefix="/financial", tags=["Financeiro e DRE"])
 
@@ -147,6 +148,59 @@ def generate_monthly_invoices(
     return [formatar_invoice_response(g) for g in gerados]
 
 
+@router.post(
+    "/invoices/sync-enrollments",
+    summary="Sincronizar e gerar parcelas pendentes de todas as matrículas ativas"
+)
+def sync_enrollments_invoices(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(
+        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.SECRETARIA.value, UserRole.COORDENACAO.value
+    ))
+):
+    """Percorre todas as matrículas ativas não experimentais e gera as parcelas faltantes no Financeiro."""
+    matriculas_ativas = db.query(Matricula).options(
+        joinedload(Matricula.aluno).joinedload(Aluno.responsavel),
+        joinedload(Matricula.turma)
+    ).filter(
+        Matricula.status == StatusMatricula.ATIVA.value,
+        Matricula.aula_experimental.is_(False)
+    ).all()
+
+    total_geradas = 0
+    matriculas_atualizadas = 0
+    for mat in matriculas_ativas:
+        novas = gerar_faturas_matricula(db, mat, aluno=mat.aluno, turma=mat.turma)
+        if novas:
+            total_geradas += len(novas)
+            matriculas_atualizadas += 1
+
+    if total_geradas > 0:
+        db.commit()
+        client_ip = request.client.host if request.client else None
+        registrar_auditoria(
+            db=db,
+            acao="SINCRONIZACAO_PARCELAS",
+            entidade="Invoice",
+            registro_id="batch",
+            detalhes={"matriculas_atualizadas": matriculas_atualizadas, "parcelas_geradas": total_geradas},
+            usuario=current_user,
+            ip=client_ip
+        )
+
+    return {
+        "matriculas_processadas": len(matriculas_ativas),
+        "matriculas_atualizadas": matriculas_atualizadas,
+        "parcelas_geradas": total_geradas,
+        "mensagem": (
+            f"{total_geradas} parcela(s) gerada(s) para {matriculas_atualizadas} matrícula(s)!"
+            if total_geradas > 0 else
+            "Todas as matrículas ativas já possuem suas parcelas geradas."
+        )
+    }
+
+
 @router.get("/invoices", response_model=List[InvoiceResponse], summary="Listar títulos e mensalidades")
 def list_invoices(
     aluno_id: Optional[int] = Query(None, description="Filtrar por aluno"),
@@ -174,10 +228,12 @@ def list_invoices(
         if inv.status == StatusTitulo.PENDENTE.value and inv.data_vencimento < today:
             inv.status = StatusTitulo.ATRASADO.value
             status_updated = True
+
+    result = [formatar_invoice_response(inv) for inv in invoices]
     if status_updated:
         db.commit()
 
-    return [formatar_invoice_response(inv) for inv in invoices]
+    return result
 
 
 @router.get("/invoices/{invoice_id}", response_model=InvoiceResponse, summary="Obter dados do título")

@@ -42,6 +42,7 @@ class MatriculaUpdate(BaseModel):
     tipo_desconto: Optional[str] = None
     dia_vencimento: Optional[int] = Field(None, ge=1, le=31)
     quantidade_parcelas: Optional[int] = Field(None, ge=1, le=24)
+    aula_experimental: Optional[bool] = None
     motivo_cancelamento: Optional[str] = None
     multa_cancelamento: Optional[float] = Field(None, ge=0.0)
     observacoes: Optional[str] = None
@@ -68,6 +69,7 @@ class MatriculaResponse(MatriculaBase):
     valor_com_desconto: Optional[float] = None
     dia_vencimento: Optional[int] = 10
     quantidade_parcelas: Optional[int] = 12
+    total_parcelas_geradas: int = 0
     criada_em: datetime
 
     model_config = ConfigDict(from_attributes=True)

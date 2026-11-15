@@ -468,11 +468,16 @@ export default function App() {
     };
 
     try {
-      await api.createEnrollment(payload);
-      showToast('Aluno matriculado e faturas geradas com sucesso!');
+      const created = await api.createEnrollment(payload);
+      if (payload.aula_experimental) {
+        showToast('Matrícula experimental registrada (sem cobrança financeira).');
+      } else {
+        const qtd = created?.total_parcelas_geradas ?? payload.quantidade_parcelas;
+        showToast(`Aluno matriculado e ${qtd} parcela(s) gerada(s) no Financeiro!`);
+      }
       setShowEnrollmentModal(false);
       setPreselectedStudentId(null);
-      loadDashboardData();
+      await loadDashboardData();
     } catch (err) {
       setModalError(err.message || 'Erro ao realizar matrícula.');
       showToast(err.message, 'error');
@@ -499,13 +504,39 @@ export default function App() {
     };
 
     try {
-      await api.updateEnrollment(editingEnrollment.id, payload);
-      showToast('Matrícula atualizada com sucesso!');
+      const updated = await api.updateEnrollment(editingEnrollment.id, payload);
+      const qtd = updated?.total_parcelas_geradas ?? 0;
+      showToast(
+        payload.status === 'ATIVA' && qtd > 0
+          ? `Matrícula atualizada! ${qtd} parcela(s) vinculada(s) no Financeiro.`
+          : 'Matrícula atualizada com sucesso!'
+      );
       setEditingEnrollment(null);
-      loadDashboardData();
+      await loadDashboardData();
     } catch (err) {
       setModalError(err.message || 'Erro ao atualizar matrícula.');
       showToast(err.message, 'error');
+    }
+  };
+
+  // 4.1b. Gerar Parcelas de uma Matrícula ou Sincronizar Todas
+  const handleGenerateEnrollmentInvoices = async (matriculaId) => {
+    try {
+      const res = await api.generateEnrollmentInvoices(matriculaId);
+      showToast(res.mensagem || 'Parcelas geradas com sucesso!');
+      await loadDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Erro ao gerar parcelas.', 'error');
+    }
+  };
+
+  const handleSyncAllInvoices = async () => {
+    try {
+      const res = await api.syncEnrollmentInvoices();
+      showToast(res.mensagem || 'Parcelas sincronizadas!');
+      await loadDashboardData();
+    } catch (err) {
+      showToast(err.message || 'Erro ao sincronizar parcelas.', 'error');
     }
   };
 
@@ -678,6 +709,15 @@ export default function App() {
   };
 
   // Utilitários
+  const formatDateBR = (dateStr) => {
+    if (!dateStr) return '-';
+    const parts = String(dateStr).split('T')[0].split('-');
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return new Date(dateStr).toLocaleDateString('pt-BR');
+  };
+
   const getStudentEnrollments = (studentId) => {
     return enrollments.filter(e => e.aluno_id === studentId && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL'));
   };
@@ -1318,15 +1358,24 @@ export default function App() {
                           )}
                         </td>
                         <td className="px-6 py-4 text-xs">
-                          {new Date(enr.data_inicio).toLocaleDateString('pt-BR')}
+                          {formatDateBR(enr.data_inicio)}
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-bold text-slate-800 block">
-                            R$ {(enr.valor_com_desconto || enr.valor_mensalidade).toFixed(2)}
+                            R$ {(enr.valor_com_desconto ?? enr.valor_mensalidade).toFixed(2)}
                           </span>
                           <span className="text-[11px] text-slate-500 block">
                             Dia {enr.dia_vencimento || 10} • {enr.quantidade_parcelas || 12}x
                           </span>
+                          {!enr.aula_experimental && (
+                            <span className={`text-[10px] font-semibold block mt-0.5 ${
+                              (enr.total_parcelas_geradas || 0) >= (enr.quantidade_parcelas || 12)
+                                ? 'text-emerald-600'
+                                : 'text-amber-700'
+                            }`}>
+                              {enr.total_parcelas_geradas || 0}/{enr.quantidade_parcelas || 12} parcelas no financeiro
+                            </span>
+                          )}
                           {enr.desconto_percentual > 0 && (
                             <span className="text-[11px] text-emerald-600 block">
                               {enr.desconto_percentual}% off ({enr.tipo_desconto})
@@ -1347,6 +1396,15 @@ export default function App() {
                           )}
                         </td>
                         <td className="px-6 py-4 text-right space-x-1 whitespace-nowrap">
+                          {enr.status === 'ATIVA' && !enr.aula_experimental && (enr.total_parcelas_geradas || 0) < (enr.quantidade_parcelas || 12) && (
+                            <button
+                              onClick={() => handleGenerateEnrollmentInvoices(enr.id)}
+                              className="px-2.5 py-1.5 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition inline-flex items-center gap-1 shadow-sm"
+                              title="Gerar mensalidades faltantes no Financeiro"
+                            >
+                              <CreditCard className="w-3.5 h-3.5" /> Gerar Parcelas
+                            </button>
+                          )}
                           <button
                             onClick={() => {
                               setEditingEnrollment(enr);
@@ -1517,7 +1575,7 @@ export default function App() {
                       <div key={def.id} className="bg-white p-4 rounded-lg border border-red-100 shadow-sm flex items-center justify-between">
                         <div>
                           <span className="font-semibold text-slate-800">{def.aluno_nome}</span>
-                          <span className="text-xs text-slate-500 block">Vencido em: {new Date(def.data_vencimento).toLocaleDateString('pt-BR')}</span>
+                          <span className="text-xs text-slate-500 block">Vencido em: {formatDateBR(def.data_vencimento)}</span>
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="text-right">
@@ -1545,6 +1603,14 @@ export default function App() {
                     <p className="text-xs text-slate-500">Formas homologadas: PIX, Cartão, Boleto e Dinheiro. Receba mensalidades com baixa imediata.</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSyncAllInvoices}
+                      className="px-3.5 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow-sm"
+                      title="Gerar parcelas pendentes de todas as matrículas ativas"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> Gerar / Sincronizar Parcelas
+                    </button>
                     <a
                       href={api.exportInvoicesUrl}
                       className="px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition flex items-center gap-1.5"
@@ -1603,8 +1669,8 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {invoices
-                        .filter(inv => {
+                      {(() => {
+                        const filteredInvoices = invoices.filter(inv => {
                           if (invoiceFilter !== 'TODAS' && inv.status !== invoiceFilter) return false;
                           if (invoiceSearch.trim()) {
                             const q = invoiceSearch.toLowerCase();
@@ -1613,8 +1679,17 @@ export default function App() {
                             if (!matchAluno && !matchDesc) return false;
                           }
                           return true;
-                        })
-                        .map((inv) => (
+                        });
+                        if (filteredInvoices.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={6} className="px-6 py-10 text-center text-xs text-slate-400">
+                                Nenhuma mensalidade encontrada para este filtro. Caso haja matrículas ativas sem parcelas, clique em <strong>Gerar / Sincronizar Parcelas</strong> acima.
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return filteredInvoices.map((inv) => (
                         <tr key={inv.id} className="hover:bg-slate-50/80 transition">
                           <td className="px-6 py-4 font-medium text-slate-900">
                             <div>{inv.descricao}</div>
@@ -1628,7 +1703,7 @@ export default function App() {
                           </td>
                           <td className="px-6 py-4 text-xs">
                             <span className={inv.status === 'ATRASADO' ? 'text-red-600 font-bold' : ''}>
-                              {new Date(inv.data_vencimento).toLocaleDateString('pt-BR')}
+                              {formatDateBR(inv.data_vencimento)}
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -1665,7 +1740,8 @@ export default function App() {
                             )}
                           </td>
                         </tr>
-                      ))}
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -2759,9 +2835,9 @@ export default function App() {
                     const selTurma = classes.find(c => c.id === parseInt(e.target.value));
                     if (selTurma) {
                       const selCourse = courses.find(cr => cr.id === selTurma.curso_id);
-                      if (selCourse) {
+                      if (selCourse && selCourse.valor_mensalidade != null) {
                         const valInput = document.getElementById('enroll_valor_mensalidade');
-                        if (valInput) valInput.value = selCourse.valor_mensalidade.toFixed(2);
+                        if (valInput) valInput.value = Number(selCourse.valor_mensalidade).toFixed(2);
                       }
                     }
                   }}
@@ -2876,7 +2952,9 @@ export default function App() {
 
               <div className="flex items-center gap-2 pt-1">
                 <input name="aula_experimental" type="checkbox" id="aula_exp" className="rounded text-amber-600" />
-                <label htmlFor="aula_exp" className="text-xs text-slate-600 font-medium">É uma aula experimental / cortesia</label>
+                <label htmlFor="aula_exp" className="text-xs text-slate-600 font-medium">
+                  É uma aula experimental / cortesia <span className="text-slate-400">(não gera parcelas no Financeiro)</span>
+                </label>
               </div>
 
               <div>
@@ -2948,7 +3026,7 @@ export default function App() {
                     <option value="ATIVA">ATIVA</option>
                     <option value="EXPERIMENTAL">EXPERIMENTAL</option>
                     <option value="TRANCADA">TRANCADA</option>
-                    <option value="CONCLUIDA">CONCLUIDA</option>
+                    <option value="AGUARDANDO_RENOVACAO">AGUARDANDO RENOVAÇÃO</option>
                     <option value="CANCELADA">CANCELADA</option>
                   </select>
                 </div>

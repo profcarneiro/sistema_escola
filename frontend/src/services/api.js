@@ -110,6 +110,7 @@ export const api = {
   getEnrollments: () => request('/enrollments/'),
   createEnrollment: (data) => request('/enrollments/', { method: 'POST', body: JSON.stringify(data) }),
   updateEnrollment: (id, data) => request(`/enrollments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  generateEnrollmentInvoices: (matriculaId) => request(`/enrollments/${matriculaId}/generate-invoices`, { method: 'POST' }),
   getWaitlist: (turmaId) => request(`/enrollments/waitlist/${turmaId}`),
 
   // Frequência & Diário
@@ -134,6 +135,7 @@ export const api = {
   getInvoices: () => request('/financial/invoices'),
   payInvoice: (id, data) => request(`/financial/invoices/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
   generateMonthly: (competencia) => request(`/financial/invoices/generate-monthly?competencia=${competencia}`, { method: 'POST' }),
+  syncEnrollmentInvoices: () => request('/financial/invoices/sync-enrollments', { method: 'POST' }),
   getDefaulters: () => request('/financial/defaulters'),
   getCashFlow: (inicio, fim) => request(`/financial/cash-flow?data_inicio=${inicio}&data_fim=${fim}`),
   getDRE: (inicio, fim) => request(`/financial/dre?competencia_inicio=${inicio}&competencia_fim=${fim}`),

@@ -265,3 +265,96 @@ def test_gerenciamento_usuarios_e_escopo_professor(client, admin_token):
     turmas_resp = client.get("/api/v1/classes/", headers=prof_headers)
     assert turmas_resp.status_code == 200
     assert len(turmas_resp.json()) == 0
+
+
+def test_converter_experimental_para_ativa_e_sincronizar_parcelas(client, admin_token, db_session):
+    from app.models.financial import Invoice
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Cria aluno, curso, sala, professor e turma
+    aluno_id = client.post("/api/v1/students/", json={
+        "nome": "Aluno Experimental",
+        "data_nascimento": "1999-04-12",
+        "cpf": "55544433322"
+    }, headers=headers).json()["id"]
+
+    curso_id = client.post("/api/v1/courses/", json={
+        "nome": "Curso Ceramica Sync",
+        "duracao_meses": 12,
+        "valor_mensalidade": 320.0
+    }, headers=headers).json()["id"]
+
+    sala_id = client.post("/api/v1/rooms/", json={"nome": "Sala Sync", "capacidade": 9}, headers=headers).json()["id"]
+    prof_id = client.post("/api/v1/teachers/", json={"nome": "Prof Sync", "email": "prof.sync@teste.com"}, headers=headers).json()["id"]
+    turma_id = client.post("/api/v1/classes/", json={
+        "nome": "Turma Sync",
+        "curso_id": curso_id,
+        "sala_id": sala_id,
+        "professor_id": prof_id,
+        "dia_semana": "SEXTA",
+        "turno": "MANHA",
+        "horario_inicio": "09:00",
+        "horario_fim": "11:00",
+        "capacidade_maxima": 9,
+        "faixa_etaria": "ADULTO"
+    }, headers=headers).json()["id"]
+
+    # 1. Cria matrícula experimental -> não deve gerar parcelas
+    mat_exp = client.post("/api/v1/enrollments/", json={
+        "aluno_id": aluno_id,
+        "turma_id": turma_id,
+        "data_matricula": str(date.today()),
+        "data_inicio": str(date.today()),
+        "valor_mensalidade": 320.0,
+        "dia_vencimento": 10,
+        "quantidade_parcelas": 4,
+        "aula_experimental": True
+    }, headers=headers)
+    assert mat_exp.status_code == 201
+    mat_id = mat_exp.json()["id"]
+    assert mat_exp.json()["total_parcelas_geradas"] == 0
+
+    invs = client.get(f"/api/v1/financial/invoices?aluno_id={aluno_id}", headers=headers).json()
+    assert len(invs) == 0
+
+    # 2. Atualiza para ATIVA -> deve gerar automaticamente as 4 parcelas
+    upd = client.put(f"/api/v1/enrollments/{mat_id}", json={"status": "ATIVA"}, headers=headers)
+    assert upd.status_code == 200
+    assert upd.json()["total_parcelas_geradas"] == 4
+
+    invs = client.get(f"/api/v1/financial/invoices?aluno_id={aluno_id}", headers=headers).json()
+    assert len(invs) == 4
+
+    # 3. Remove parcelas simulando matrícula legada sem parcelas e testa sync + endpoint por matrícula
+    db_session.query(Invoice).filter(Invoice.matricula_id == mat_id).delete()
+    db_session.commit()
+
+    gen_resp = client.post(f"/api/v1/enrollments/{mat_id}/generate-invoices", headers=headers)
+    assert gen_resp.status_code == 200
+    assert gen_resp.json()["parcelas_geradas"] == 4
+
+    # Sync em lote não deve duplicar parcelas já geradas
+    sync_resp = client.post("/api/v1/financial/invoices/sync-enrollments", headers=headers)
+    assert sync_resp.status_code == 200
+    assert sync_resp.json()["parcelas_geradas"] == 0
+
+    # 4. Matrícula com valor 0 (bolsa 100%) não deve quebrar GET /financial/invoices
+    aluno2_id = client.post("/api/v1/students/", json={
+        "nome": "Aluno Bolsa Zero",
+        "data_nascimento": "1998-01-10",
+        "cpf": "77766655544"
+    }, headers=headers).json()["id"]
+    mat_zero = client.post("/api/v1/enrollments/", json={
+        "aluno_id": aluno2_id,
+        "turma_id": turma_id,
+        "data_matricula": str(date.today()),
+        "data_inicio": str(date.today()),
+        "valor_mensalidade": 0.0,
+        "dia_vencimento": 10,
+        "quantidade_parcelas": 2,
+        "aula_experimental": False
+    }, headers=headers)
+    assert mat_zero.status_code == 201
+    all_invs = client.get("/api/v1/financial/invoices", headers=headers)
+    assert all_invs.status_code == 200
+    assert len(all_invs.json()) == 6
