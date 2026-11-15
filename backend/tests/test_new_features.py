@@ -405,7 +405,7 @@ def test_filtros_financeiro_mes_ano_aluno_responsavel_e_dre(client, admin_token)
         "horario_inicio": "14:00",
         "horario_fim": "16:00",
         "capacidade_maxima": 9,
-        "faixa_etaria": "LIVRE"
+        "faixa_etaria": "ADULTO"
     }, headers=headers).json()["id"]
 
     # Matricula aluno1 em 2026-03 (3 parcelas: 2026-03, 2026-04, 2026-05)
@@ -459,3 +459,116 @@ def test_filtros_financeiro_mes_ano_aluno_responsavel_e_dre(client, admin_token)
     )
     assert dre_aluno.status_code == 200
     assert dre_aluno.json()["receita_liquida"] == 1200.0
+
+
+def test_atualizar_parcelas_e_cancelar_matricula_sincroniza_financeiro(client, admin_token):
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Setup: Curso, Sala, Professor, Turma, Aluno
+    curso_id = client.post("/api/v1/courses/", json={
+        "nome": "Violão Sync Financeiro",
+        "duracao_meses": 12,
+        "valor_mensalidade": 300.0
+    }, headers=headers).json()["id"]
+    sala_id = client.post("/api/v1/rooms/", json={"nome": "Sala Sync", "capacidade": 9}, headers=headers).json()["id"]
+    prof_id = client.post("/api/v1/teachers/", json={"nome": "Prof Sync", "email": "prof.sync@teste.com"}, headers=headers).json()["id"]
+    turma = client.post("/api/v1/classes/", json={
+        "nome": "Violão Terça 18h",
+        "curso_id": curso_id,
+        "sala_id": sala_id,
+        "professor_id": prof_id,
+        "dia_semana": "TERCA",
+        "turno": "NOITE",
+        "horario_inicio": "18:00",
+        "horario_fim": "19:30",
+        "capacidade_maxima": 9,
+        "faixa_etaria": "ADULTO"
+    }, headers=headers).json()
+    aluno = client.post("/api/v1/students/", json={
+        "nome": "Aluno Parcela Sync",
+        "data_nascimento": "2000-03-10",
+        "cpf": "444.555.666-77"
+    }, headers=headers).json()
+
+    # Cria matrícula ativa com 6 parcelas
+    mat = client.post("/api/v1/enrollments/", json={
+        "aluno_id": aluno["id"],
+        "turma_id": turma["id"],
+        "data_matricula": "2026-01-01",
+        "data_inicio": "2026-01-01",
+        "valor_mensalidade": 300.0,
+        "dia_vencimento": 10,
+        "quantidade_parcelas": 6,
+        "aula_experimental": False
+    }, headers=headers)
+    assert mat.status_code == 201
+    mat_id = mat.json()["id"]
+    assert mat.json()["total_parcelas_geradas"] == 6
+
+    invs = client.get(f"/api/v1/financial/invoices?aluno_id={aluno['id']}", headers=headers).json()
+    assert len(invs) == 6
+
+    # Dá baixa na primeira parcela (2026-01) — parcelas pagas nunca devem ser canceladas ou alteradas
+    primeira = sorted(invs, key=lambda i: i["competencia"])[0]
+    pay_res = client.post(f"/api/v1/financial/invoices/{primeira['id']}/pay", json={
+        "valor_pago": 300.0,
+        "forma_pagamento": "PIX"
+    }, headers=headers)
+    assert pay_res.status_code == 200
+
+    # 1) Reduz parcelas de 6 para 3 e altera valor e dia de vencimento
+    upd_reduce = client.put(f"/api/v1/enrollments/{mat_id}", json={
+        "quantidade_parcelas": 3,
+        "valor_mensalidade": 350.0,
+        "dia_vencimento": 15
+    }, headers=headers)
+    assert upd_reduce.status_code == 200
+    assert upd_reduce.json()["total_parcelas_geradas"] == 3
+
+    invs_after_reduce = client.get(f"/api/v1/financial/invoices?aluno_id={aluno['id']}", headers=headers).json()
+    ativas_reduce = [i for i in invs_after_reduce if i["status"] != "CANCELADO"]
+    canceladas_reduce = [i for i in invs_after_reduce if i["status"] == "CANCELADO"]
+    assert len(ativas_reduce) == 3
+    assert len(canceladas_reduce) == 3
+
+    # Primeira parcela permanece PAGO no valor antigo (300.0), as outras 2 em aberto assumem novo valor (350.0) e dia 15
+    ativas_sorted = sorted(ativas_reduce, key=lambda i: i["competencia"])
+    assert ativas_sorted[0]["status"] == "PAGO"
+    assert ativas_sorted[0]["valor_final"] == 300.0
+    assert ativas_sorted[1]["valor_final"] == 350.0
+    assert ativas_sorted[1]["data_vencimento"].endswith("-15")
+    assert "2/3" in ativas_sorted[1]["descricao"]
+
+    # 2) Aumenta parcelas de 3 para 5 -> gera 2 novas (2026-04 e 2026-05)
+    upd_inc = client.put(f"/api/v1/enrollments/{mat_id}", json={
+        "quantidade_parcelas": 5
+    }, headers=headers)
+    assert upd_inc.status_code == 200
+    assert upd_inc.json()["total_parcelas_geradas"] == 5
+
+    invs_after_inc = client.get(f"/api/v1/financial/invoices?aluno_id={aluno['id']}", headers=headers).json()
+    ativas_inc = [i for i in invs_after_inc if i["status"] != "CANCELADO"]
+    assert len(ativas_inc) == 5
+
+    # 3) Cancela a matrícula -> todas as parcelas em aberto devem ser canceladas; a PAGO continua PAGO
+    upd_cancel = client.put(f"/api/v1/enrollments/{mat_id}", json={
+        "status": "CANCELADA",
+        "motivo_cancelamento": "Desistência por mudança de horário"
+    }, headers=headers)
+    assert upd_cancel.status_code == 200
+    assert upd_cancel.json()["total_parcelas_geradas"] == 1
+
+    invs_final = client.get(f"/api/v1/financial/invoices?aluno_id={aluno['id']}", headers=headers).json()
+    pagas_final = [i for i in invs_final if i["status"] == "PAGO"]
+    abertas_final = [i for i in invs_final if i["status"] in ("PENDENTE", "ATRASADO")]
+    canceladas_final = [i for i in invs_final if i["status"] == "CANCELADO"]
+    assert len(pagas_final) == 1
+    assert len(abertas_final) == 0
+    assert len(canceladas_final) >= 4
+
+    # Não deve ser possível dar baixa em parcela cancelada
+    pay_cancelado = client.post(f"/api/v1/financial/invoices/{canceladas_final[0]['id']}/pay", json={
+        "valor_pago": 350.0,
+        "forma_pagamento": "DINHEIRO"
+    }, headers=headers)
+    assert pay_cancelado.status_code == 400

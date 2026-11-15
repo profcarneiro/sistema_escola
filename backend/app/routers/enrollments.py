@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import uuid
 import calendar
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -39,41 +39,102 @@ def contar_parcelas_matricula(db: Session, matricula_id: int) -> int:
     ).count()
 
 
-def gerar_faturas_matricula(
+STATUS_FATURAS_ABERTAS = (StatusTitulo.PENDENTE.value, StatusTitulo.ATRASADO.value)
+
+
+def _cancelar_faturas_abertas(faturas: List[Invoice], motivo: str) -> int:
+    """Cancela apenas títulos ainda em aberto, preservando títulos já pagos."""
+    canceladas = 0
+    for inv in faturas:
+        if inv.status in STATUS_FATURAS_ABERTAS:
+            inv.status = StatusTitulo.CANCELADO.value
+            inv.observacoes = f"{inv.observacoes} | {motivo}".strip(" |") if inv.observacoes else motivo
+            canceladas += 1
+    return canceladas
+
+
+def sincronizar_faturas_matricula(
     db: Session,
     matricula: Matricula,
     aluno: Optional[Aluno] = None,
     turma: Optional[ClassGroup] = None
-) -> List[Invoice]:
+) -> Dict[str, Any]:
     """
-    Gera as mensalidades faltantes (até quantidade_parcelas) para uma matrícula ativa
-    não experimental, evitando duplicidade por competência (YYYY-MM).
+    Sincroniza todas as faturas da matrícula no Financeiro:
+    - Matrícula CANCELADA ou EXPERIMENTAL: cancela parcelas ainda em aberto (PENDENTE/ATRASADO), mantendo as PAGO.
+    - Matrícula TRANCADA: cancela parcelas futuras (PENDENTE), preservando PAGO e ATRASADO.
+    - Matrícula ATIVA (não experimental): ajusta quantidade de parcelas (cancela excedentes em aberto e gera faltantes)
+      e atualiza valores/vencimentos das parcelas ainda em aberto conforme os dados vigentes da matrícula.
     """
-    if matricula.status != StatusMatricula.ATIVA.value or matricula.aula_experimental:
-        return []
+    faturas_nao_canceladas = db.query(Invoice).filter(
+        Invoice.matricula_id == matricula.id,
+        Invoice.status != StatusTitulo.CANCELADO.value
+    ).order_by(Invoice.competencia.asc(), Invoice.id.asc()).all()
+
+    if matricula.status == StatusMatricula.CANCELADA.value:
+        motivo = matricula.motivo_cancelamento or "Matrícula cancelada"
+        canceladas = _cancelar_faturas_abertas(faturas_nao_canceladas, f"Cancelado: {motivo}")
+        return {"geradas": [], "atualizadas": 0, "canceladas": canceladas}
+
+    if matricula.status == StatusMatricula.EXPERIMENTAL.value or matricula.aula_experimental:
+        canceladas = _cancelar_faturas_abertas(faturas_nao_canceladas, "Matrícula convertida para aula experimental")
+        return {"geradas": [], "atualizadas": 0, "canceladas": canceladas}
+
+    if matricula.status == StatusMatricula.TRANCADA.value:
+        canceladas = _cancelar_faturas_abertas(
+            [inv for inv in faturas_nao_canceladas if inv.status == StatusTitulo.PENDENTE.value],
+            "Matrícula trancada"
+        )
+        return {"geradas": [], "atualizadas": 0, "canceladas": canceladas}
+
+    if matricula.status != StatusMatricula.ATIVA.value:
+        return {"geradas": [], "atualizadas": 0, "canceladas": 0}
 
     quantidade_parcelas = matricula.quantidade_parcelas if matricula.quantidade_parcelas is not None else 12
     dia_vencimento = matricula.dia_vencimento or 10
-    if quantidade_parcelas <= 0:
-        return []
 
     if aluno is None:
         aluno = db.query(Aluno).options(joinedload(Aluno.responsavel)).filter(Aluno.id == matricula.aluno_id).first()
     if turma is None:
         turma = db.query(ClassGroup).filter(ClassGroup.id == matricula.turma_id).first()
 
-    faturas_existentes = db.query(Invoice).filter(
-        Invoice.matricula_id == matricula.id,
-        Invoice.status != StatusTitulo.CANCELADO.value
-    ).all()
-
-    if len(faturas_existentes) >= quantidade_parcelas:
-        return []
-
-    competencias_existentes = {inv.competencia for inv in faturas_existentes}
-
+    # Monta a grade alvo de competências e vencimentos para as N parcelas da matrícula
+    slots = []
     ano_cursor = matricula.data_inicio.year
     mes_cursor = matricula.data_inicio.month
+    for i in range(max(0, quantidade_parcelas)):
+        max_dias = calendar.monthrange(ano_cursor, mes_cursor)[1]
+        dia_efetivo = min(dia_vencimento, max_dias)
+        data_venc = date(ano_cursor, mes_cursor, dia_efetivo)
+        competencia = f"{ano_cursor:04d}-{mes_cursor:02d}"
+        slots.append({
+            "indice": i + 1,
+            "mes": mes_cursor,
+            "ano": ano_cursor,
+            "competencia": competencia,
+            "data_vencimento": data_venc,
+        })
+        mes_cursor += 1
+        if mes_cursor > 12:
+            mes_cursor = 1
+            ano_cursor += 1
+
+    target_competencias = {slot["competencia"] for slot in slots}
+
+    # Agrupa faturas existentes por competência e cancela excedentes fora da nova quantidade_parcelas
+    faturas_por_competencia: Dict[str, List[Invoice]] = {}
+    faturas_fora_da_grade: List[Invoice] = []
+    for inv in faturas_nao_canceladas:
+        if inv.competencia in target_competencias:
+            faturas_por_competencia.setdefault(inv.competencia, []).append(inv)
+        else:
+            faturas_fora_da_grade.append(inv)
+
+    canceladas = _cancelar_faturas_abertas(
+        faturas_fora_da_grade,
+        f"Ajuste de parcelas da matrícula ({quantidade_parcelas}x)"
+    )
+
     hoje = date.today()
     valor_nominal = round(float(matricula.valor_mensalidade or 0.0), 2)
     desconto_pct = float(matricula.desconto_percentual or 0.0)
@@ -83,24 +144,42 @@ def gerar_faturas_matricula(
     turma_nome = turma.nome if turma else f"Turma #{matricula.turma_id}"
 
     novas_faturas: List[Invoice] = []
-    for i in range(quantidade_parcelas):
-        max_dias = calendar.monthrange(ano_cursor, mes_cursor)[1]
-        dia_efetivo = min(dia_vencimento, max_dias)
-        data_venc = date(ano_cursor, mes_cursor, dia_efetivo)
-        competencia = f"{ano_cursor:04d}-{mes_cursor:02d}"
+    atualizadas = 0
 
-        mes_atual = mes_cursor
-        ano_atual = ano_cursor
-        mes_cursor += 1
-        if mes_cursor > 12:
-            mes_cursor = 1
-            ano_cursor += 1
+    for slot in slots:
+        competencia = slot["competencia"]
+        data_venc = slot["data_vencimento"]
+        status_esperado = StatusTitulo.ATRASADO.value if data_venc < hoje else StatusTitulo.PENDENTE.value
+        desc = f"Mensalidade {slot['indice']}/{quantidade_parcelas} ({slot['mes']:02d}/{slot['ano']}) - {turma_nome}"[:200]
 
-        if competencia in competencias_existentes:
+        existentes = faturas_por_competencia.get(competencia, [])
+        if existentes:
+            # Prioriza fatura já paga caso haja duplicidade na mesma competência
+            existentes.sort(key=lambda f: (0 if f.status == StatusTitulo.PAGO.value else 1, f.id))
+            principal = existentes[0]
+            if len(existentes) > 1:
+                canceladas += _cancelar_faturas_abertas(existentes[1:], "Ajuste de parcelas duplicadas")
+
+            if principal.status in STATUS_FATURAS_ABERTAS:
+                alterou = (
+                    principal.descricao != desc
+                    or round(float(principal.valor_nominal or 0.0), 2) != valor_nominal
+                    or round(float(principal.desconto_aplicado or 0.0), 2) != desconto_val
+                    or round(float(principal.valor_final or 0.0), 2) != valor_final
+                    or principal.data_vencimento != data_venc
+                    or principal.status != status_esperado
+                    or principal.responsavel_id != resp_id
+                )
+                if alterou:
+                    principal.descricao = desc
+                    principal.valor_nominal = valor_nominal
+                    principal.desconto_aplicado = desconto_val
+                    principal.valor_final = valor_final
+                    principal.data_vencimento = data_venc
+                    principal.status = status_esperado
+                    principal.responsavel_id = resp_id
+                    atualizadas += 1
             continue
-
-        status_inv = StatusTitulo.ATRASADO.value if data_venc < hoje else StatusTitulo.PENDENTE.value
-        desc = f"Mensalidade {i+1}/{quantidade_parcelas} ({mes_atual:02d}/{ano_atual}) - {turma_nome}"[:200]
 
         fatura = Invoice(
             matricula_id=matricula.id,
@@ -112,13 +191,22 @@ def gerar_faturas_matricula(
             desconto_aplicado=desconto_val,
             valor_final=valor_final,
             data_vencimento=data_venc,
-            status=status_inv
+            status=status_esperado
         )
         db.add(fatura)
         novas_faturas.append(fatura)
-        competencias_existentes.add(competencia)
 
-    return novas_faturas
+    return {"geradas": novas_faturas, "atualizadas": atualizadas, "canceladas": canceladas}
+
+
+def gerar_faturas_matricula(
+    db: Session,
+    matricula: Matricula,
+    aluno: Optional[Aluno] = None,
+    turma: Optional[ClassGroup] = None
+) -> List[Invoice]:
+    """Gera e sincroniza automaticamente as mensalidades da matrícula ativa no Financeiro."""
+    return sincronizar_faturas_matricula(db, matricula, aluno=aluno, turma=turma)["geradas"]
 
 
 def formatar_matricula_response(matricula: Matricula, total_parcelas: int = 0) -> MatriculaResponse:
@@ -352,7 +440,7 @@ def update_enrollment(
     if mat_update.observacoes is not None:
         matricula.observacoes = mat_update.observacoes
 
-    faturas_geradas = gerar_faturas_matricula(
+    sync_result = sincronizar_faturas_matricula(
         db, matricula, aluno=matricula.aluno, turma=matricula.turma
     )
 
@@ -368,7 +456,9 @@ def update_enrollment(
         detalhes={
             "status": matricula.status,
             "contrato_assinado": matricula.contrato_assinado,
-            "parcelas_geradas": len(faturas_geradas)
+            "parcelas_geradas": len(sync_result["geradas"]),
+            "parcelas_atualizadas": sync_result["atualizadas"],
+            "parcelas_canceladas": sync_result["canceladas"]
         },
         usuario=current_user,
         ip=client_ip

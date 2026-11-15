@@ -542,11 +542,19 @@ export default function App() {
     try {
       const updated = await api.updateEnrollment(editingEnrollment.id, payload);
       const qtd = updated?.total_parcelas_geradas ?? 0;
-      showToast(
-        payload.status === 'ATIVA' && qtd > 0
-          ? `Matrícula atualizada! ${qtd} parcela(s) vinculada(s) no Financeiro.`
-          : 'Matrícula atualizada com sucesso!'
-      );
+      if (payload.status === 'CANCELADA') {
+        showToast('Matrícula cancelada e parcelas em aberto canceladas no Financeiro!');
+      } else if (payload.status === 'TRANCADA') {
+        showToast('Matrícula trancada e parcelas futuras canceladas no Financeiro!');
+      } else if (payload.status === 'EXPERIMENTAL') {
+        showToast('Matrícula alterada para experimental e parcelas em aberto canceladas!');
+      } else {
+        showToast(
+          payload.status === 'ATIVA' && qtd > 0
+            ? `Matrícula atualizada! ${qtd} parcela(s) ativa(s) sincronizada(s) no Financeiro.`
+            : 'Matrícula atualizada com sucesso!'
+        );
+      }
       setEditingEnrollment(null);
       await loadDashboardData();
     } catch (err) {
@@ -1661,7 +1669,7 @@ export default function App() {
 
             const baseFilteredInvoices = invoices.filter(matchesCommonFilters);
             const filteredInvoices = baseFilteredInvoices.filter(inv =>
-              invoiceFilter === 'TODAS' ? true : inv.status === invoiceFilter
+              invoiceFilter === 'TODAS' ? inv.status !== 'CANCELADO' : inv.status === invoiceFilter
             );
             const filteredDefaulters = defaulters.filter(matchesCommonFilters);
 
@@ -1855,10 +1863,11 @@ export default function App() {
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
                     <div className="flex flex-wrap gap-1.5">
                       {[
-                        { id: 'TODAS', label: `Todas (${baseFilteredInvoices.length})` },
+                        { id: 'TODAS', label: `Todas (${baseFilteredInvoices.filter(i => i.status !== 'CANCELADO').length})` },
                         { id: 'PENDENTE', label: `Pendentes (${baseFilteredInvoices.filter(i => i.status === 'PENDENTE').length})` },
                         { id: 'ATRASADO', label: `Vencidas (${baseFilteredInvoices.filter(i => i.status === 'ATRASADO').length})` },
                         { id: 'PAGO', label: `Pagas (${baseFilteredInvoices.filter(i => i.status === 'PAGO').length})` },
+                        { id: 'CANCELADO', label: `Canceladas (${baseFilteredInvoices.filter(i => i.status === 'CANCELADO').length})` },
                       ].map(f => (
                         <button
                           key={f.id}
@@ -1949,13 +1958,20 @@ export default function App() {
                           <td className="px-6 py-4">
                             <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold ${
                               inv.status === 'PAGO' ? 'bg-emerald-100 text-emerald-800' :
-                              inv.status === 'ATRASADO' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-800'
+                              inv.status === 'ATRASADO' ? 'bg-red-100 text-red-800' :
+                              inv.status === 'CANCELADO' ? 'bg-slate-200 text-slate-600' : 'bg-amber-100 text-amber-800'
                             }`}>
-                              {inv.status === 'PAGO' ? '✓ PAGO' : inv.status === 'ATRASADO' ? '⚠ VENCIDO' : '⏳ PENDENTE'}
+                              {inv.status === 'PAGO' ? '✓ PAGO' : inv.status === 'ATRASADO' ? '⚠ VENCIDO' : inv.status === 'CANCELADO' ? '✕ CANCELADO' : '⏳ PENDENTE'}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
-                            {inv.status !== 'PAGO' ? (
+                            {inv.status === 'PAGO' ? (
+                              <span className="text-xs text-emerald-700 font-medium inline-flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" /> Pago ({inv.forma_pagamento || 'OK'})
+                              </span>
+                            ) : inv.status === 'CANCELADO' ? (
+                              <span className="text-xs text-slate-400 font-medium">Cancelada</span>
+                            ) : (
                               <button
                                 onClick={() => {
                                   setShowPayModal(inv);
@@ -1967,10 +1983,6 @@ export default function App() {
                               >
                                 <CreditCard className="w-3.5 h-3.5" /> Receber / Baixa
                               </button>
-                            ) : (
-                              <span className="text-xs text-emerald-700 font-medium inline-flex items-center gap-1">
-                                <Check className="w-3.5 h-3.5" /> Pago ({inv.forma_pagamento || 'OK'})
-                              </span>
                             )}
                           </td>
                         </tr>

@@ -25,6 +25,7 @@ O sistema foi concebido para atender às dores centrais levantadas no briefing c
 ### 1. Autenticação e Perfis (RBAC)
 - Autenticação JWT com senhas criptografadas em `bcrypt`.
 - 5 perfis de acesso: **Direção**, **Coordenação**, **Secretaria**, **Financeiro** e **Professor**.
+- **Gerenciamento de Usuários e Escopo de Professor**: cadastro, ativação/desativação e vínculo de professores pela Direção; professores acessam apenas suas próprias turmas, diários de classe e lançamentos de frequência.
 - Trilha de auditoria em banco de dados (`AuditLog`) registrando IP, data/hora e operador, com mascaramento contra vazamento de senhas e dados sensíveis.
 
 ### 2. Infraestrutura e Turmas
@@ -34,23 +35,26 @@ O sistema foi concebido para atender às dores centrais levantadas no briefing c
 - **Carga Inicial Automática (Seed)**: 6 salas de aula físicas e 9 modalidades artísticas (Desenho Publicitário, Desenho Artístico, Desenho Moda, Desenho Infantil, Óleo sobre tela, Aquarela, Arteterapia, Fotografia e Mangá).
 
 ### 3. Alunos, Responsáveis e Matrículas
-- **Responsável Único**: Regra explícita do cliente que impede que um aluno possua mais de um responsável cadastrado (`UniqueConstraint` e verificação de API).
-- **Obrigatoriedade para Menores**: Menores de 18 anos exigem obrigatoriamente responsável legal e financeiro (Nome, CPF, Endereço, Telefone 19, E-mail).
+- **Edição e Responsável Único**: cadastro e atualização de alunos e responsáveis, mantendo a regra de responsável único por aluno (`UniqueConstraint` e verificação de API).
+- **Obrigatoriedade para Menores**: Menores de 18 anos exigem obrigatoriamente responsável legal e financeiro (Nome, CPF, Endereço, Telefone, E-mail).
+- **Parcelamento e Sincronização Financeira**: definição de **dia de pagamento preferencial** (`05, 10, 15, 20, 25`) e **quantidade de parcelas** (`1x` a `12x`), gerando automaticamente os títulos no Financeiro e sincronizando alterações, trancamentos ou cancelamentos (preservando parcelas já pagas).
 - **Contratos e Renovação**: Renovação **NÃO automática** (exige novo contrato assinado). Cancelamento e trancamento exigem justificativa e calculam multa contratual.
 - **Lista de Espera**: Fila ordenada por posição quando a turma atinge a lotação de 9 alunos.
 
 ### 4. Pedagógico, Frequência e Reposições
 - **Diário de Classe**: Registro de tema da aula, conteúdos programáticos, materiais utilizados e observações.
 - **Chamada por Aula**: Lançamento de frequência individual ou em lote (`PRESENTE`, `FALTA`, `JUSTIFICADA`).
+- **Relatórios de Frequência**: Visão geral consolidada por turma e relatório detalhado por aluno com histórico de aulas e taxa de presença.
 - 🔒 **Regra de Reposição de Aulas**: Reposições permitidas **estritamente dentro do mês corrente da falta ou até a 1ª semana (dia 07) do mês seguinte**. Agendamentos fora desse prazo são rejeitados com `HTTP 422`.
 
 ### 5. Financeiro, Inadimplência e DRE
 - **Formas de Pagamento Homologadas**: Exclusivamente **PIX, Cartão, Boleto e Dinheiro**. Qualquer outra forma é rejeitada.
-- **Faturamento em Lote**: Emissão mensal de títulos aplicando descontos da matrícula (`irmao`, `indicacao`, `bolsa`).
+- **Geração Automática e Faturamento em Lote**: geração automática de todas as parcelas na matrícula ativa e sincronização em lote, aplicando descontos (`irmao`, `indicacao`, `bolsa`) e identificando títulos pendentes ou vencidos (`ATRASADO`).
+- **Baixa e Filtros Avançados**: recebimento direto nas mensalidades com contabilização imediata no Fluxo de Caixa/DRE e filtros por **mês**, **ano**, **aluno & responsável**, status (`Todas`, `Pendentes`, `Vencidas`, `Pagas`, `Canceladas`) e busca textual.
 - **Régua de Cobrança**: Identificação de títulos vencidos e cálculo automático de multa contratual (2%) e juros de mora pro-rata (1% a.m.).
 - **Demonstrativos**:
   - **Fluxo de Caixa**: Total de entradas discriminadas por forma de pagamento, saídas operacionais e saldo do período.
-  - **DRE**: Demonstração do Resultado do Exercício com Receita Bruta, Deduções e Descontos, Receita Líquida, Despesas Operacionais e Resultado Líquido.
+  - **DRE**: Demonstração do Resultado do Exercício com Receita Bruta, Deduções e Descontos, Receita Líquida (com filtro opcional por aluno), Despesas Operacionais e Resultado Líquido.
 
 ### 6. Comunicação e Backup Local
 - **Links para WhatsApp**: Geração de URLs `wa.me` com mensagens pré-formatadas para lembretes de cobrança com chave PIX, boas-vindas e comunicados.
@@ -196,7 +200,7 @@ A aplicação conta com uma interface moderna, responsiva e totalmente dinâmica
    - Painel de ocupação física dos estúdios com teto de 9 alunos.
    - Demonstrativo de Resultado Operacional (DRE) simplificado.
 3. **Gestão de Alunos & Responsáveis:**
-   - Listagem de alunos com cálculo automático de maioridade e responsável legal.
+   - Cadastro e edição de alunos e responsáveis com cálculo automático de maioridade.
    - Exibição direta dos **cursos e turmas vinculados a cada aluno**.
    - Botão **"+ Matricular"** direto em cada linha do aluno para matrícula ágil.
    - Validação estrita de menor de 18 anos exigindo responsável legal único com CPF.
@@ -204,7 +208,8 @@ A aplicação conta com uma interface moderna, responsiva e totalmente dinâmica
    - Visualização de todas as modalidades (Desenho, Aquarela, Óleo sobre Tela, Mangá, etc.).
    - Botão **"+ Novo Curso"** com modal funcional para cadastrar novas modalidades com duração e mensalidade base.
 5. **Matrículas & Contratos:**
-   - Vínculo direto de alunos a turmas/cursos com número de contrato gerado automaticamente.
+   - Vínculo direto de alunos a turmas/cursos com contrato gerado automaticamente, dia de vencimento preferencial e quantidade de parcelas (`1x` a `12x`).
+   - Edição completa da matrícula/contrato, com atualização ou cancelamento automático das parcelas em aberto no Financeiro.
    - Controle de descontos (`irmao`, `indicacao`, `bolsa`) e aulas experimentais.
    - Botão para disparo de mensagem de boas-vindas e confirmação de matrícula via WhatsApp.
 6. **Controle de Turmas & Capacidade (Teto 9):**
@@ -213,16 +218,19 @@ A aplicação conta com uma interface moderna, responsiva e totalmente dinâmica
    - Lista dos nomes dos alunos que pertencem a cada turma.
    - Botão **"+ Nova Turma"** com modal e prevenção de conflitos de horário.
 7. **Diário de Classe & Frequência Semanal:**
-   - Seleção da turma ativa e data da aula.
+   - Seleção da turma ativa e data da aula (com escopo restrito às próprias turmas para perfil Professor).
    - Lançamento do tema trabalhado, técnicas e materiais utilizados.
    - Chamada interativa dos alunos matriculados com botões `PRESENTE` / `FALTA` / `JUSTIFICADA`.
-   - Histórico das aulas registradas.
+   - Relatórios de frequência com visão geral por turma e histórico individual por aluno.
 8. **Módulo Financeiro e Cobrança:**
-   - Listagem de títulos com status visual (`Pendente`, `Pago`, `Atrasado`).
+   - Listagem de títulos com status visual (`Pendente`, `Vencido`, `Pago`, `Cancelado`) e sincronização automática com matrículas.
+   - Filtros por **mês**, **ano**, **aluno & responsável**, status e busca textual, além de filtro por aluno no DRE.
    - Modal de baixa de pagamento com formas exclusivas homologadas: **PIX, Cartão, Boleto ou Dinheiro**.
    - Cálculo automático de multa de 2% e juros para títulos vencidos.
    - **Botão WhatsApp Direto (`wa.me`)** para envio de cobrança amigável via celular ou WhatsApp Web.
-9. **Módulo de Backup Local:**
+9. **Módulo de Usuários & Acessos:**
+   - Gerenciamento de usuários (Direção, Coordenação, Secretaria, Financeiro e Professor) com vínculo ao cadastro docente.
+10. **Módulo de Backup Local:**
    - Botão para criação instantânea de snapshot atômico do banco de dados SQLite.
    - Tabela de histórico de backups com tamanho em MB e data/hora.
    - Link de download direto de arquivos `.db` para pendrive da escola.
@@ -262,6 +270,9 @@ PYTHONPATH=backend pytest -v
 
 Para rodar testes de um módulo específico:
 ```bash
+# Testes de novas funcionalidades (filtros financeiros, sincronização de parcelas, usuários e relatórios)
+PYTHONPATH=backend pytest backend/tests/test_new_features.py -v
+
 # Testes financeiros (formas de pagamento, lote, DRE, inadimplência)
 PYTHONPATH=backend pytest backend/tests/test_financial.py -v
 

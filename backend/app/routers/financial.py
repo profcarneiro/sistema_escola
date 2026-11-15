@@ -304,6 +304,8 @@ def pay_invoice(
 
     if inv.status == StatusTitulo.PAGO.value:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este título já se encontra totalmente pago.")
+    if inv.status == StatusTitulo.CANCELADO.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Este título está cancelado e não pode receber baixa.")
 
     # Registra o pagamento
     novo_pagamento = Payment(
