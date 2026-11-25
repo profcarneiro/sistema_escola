@@ -204,3 +204,20 @@ class WorkshopParticipant(Base):
     criado_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     workshop = relationship("WorkshopSession", back_populates="participantes")
+
+
+class ForecastSettings(Base):
+    """Premissas editáveis da previsão financeira para os próximos 12 meses."""
+    __tablename__ = "forecast_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    novos_alunos_mes = Column(Integer, default=2, nullable=False)
+    saidas_alunos_mes = Column(Integer, default=0, nullable=False)
+    custo_fixo_mensal_estimado = Column(Float, default=0.0, nullable=False)
+    ticket_medio_override = Column(Float, default=0.0, nullable=False)
+    atualizado_em = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )

@@ -109,7 +109,7 @@ export const api = {
   getMe: () => request('/auth/me'),
 
   // Dashboard & Relatórios
-  getDashboard: () => request('/reports/dashboard'),
+  getDashboard: (competencia = '') => request(`/reports/dashboard${competencia ? `?competencia=${competencia}` : ''}`),
   getRoomOccupancy: () => request('/reports/room-occupancy'),
   exportStudentsUrl: `${API_BASE}/reports/export/students-csv`,
   exportInvoicesUrl: `${API_BASE}/reports/export/invoices-csv`,
@@ -198,6 +198,11 @@ export const api = {
   getCostCenters: () => request('/financial/cost-centers'),
   createCostCenter: (data) => request('/financial/cost-centers', { method: 'POST', body: JSON.stringify(data) }),
   getCostCentersReport: (params = '') => request(`/financial/cost-centers/report${params ? `?${params}` : ''}`),
+  getMonthlyCashFlow: (ano) => request(`/financial/cash-flow-monthly${ano ? `?ano=${ano}` : ''}`),
+  getForecastSettings: () => request('/financial/forecast/settings'),
+  updateForecastSettings: (data) => request('/financial/forecast/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  getForecast12Months: (params = '') => request(`/financial/forecast-12m${params ? `?${params}` : ''}`),
+  getStudentMonthlyMatrix: (params = '') => request(`/financial/student-monthly-matrix${params ? `?${params}` : ''}`),
 
   // Operacional: Pagamento de Professores, Comercial & Ateliê Parceria
   getTeacherRules: (professorId = '') =>

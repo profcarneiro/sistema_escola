@@ -1,9 +1,12 @@
+import calendar
 import csv
 import io
+import math
 from datetime import date
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -11,19 +14,36 @@ from app.models.student import Aluno
 from app.models.room import Room
 from app.models.class_group import ClassGroup
 from app.models.enrollment import Matricula, StatusMatricula
-from app.models.financial import Invoice, StatusTitulo
+from app.models.financial import Invoice, Payment, Expense, StatusTitulo
+from app.models.operations import WorkshopSession
 from app.models.user import User, UserRole
 from app.routers.auth import get_current_active_user, require_roles
 from app.routers.enrollments import contar_matriculas_ativas
+from app.routers.financial import calcular_ticket_medio_escola
 
 router = APIRouter(prefix="/reports", tags=["Relatórios e Dashboards"])
 
 
 class DashboardSummary(BaseModel):
+    competencia: str
     total_alunos_ativos: int
     total_alunos_inativos: int
     total_turmas_ativas: int
+    vagas_ocupadas: int
+    capacidade_total: int
     taxa_ocupacao_geral_percentual: float
+    ticket_medio: float
+    ponto_equilibrio_alunos: int
+    ponto_equilibrio_valor: float
+    receita_esperada_mes: float
+    receita_recebida_mes: float
+    percentual_recebido_mes: float
+    despesas_previstas_mes: float
+    despesas_pagas_mes: float
+    lucro_mes: float
+    lucro_acumulado: float
+    despesas_atrasadas_qtd: int
+    despesas_atrasadas_valor: float
     total_faturas_abertas: int
     total_inadimplentes: int
     valor_total_inadimplente: float
@@ -38,18 +58,112 @@ class RoomOccupancyReport(BaseModel):
 
 @router.get("/dashboard", response_model=DashboardSummary, summary="Dashboard executivo gerencial")
 def get_dashboard_summary(
+    competencia: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM (padrão mês atual)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
     hoje = date.today()
+    if competencia:
+        ano, mes = map(int, competencia.split("-"))
+    else:
+        ano, mes = hoje.year, hoje.month
+    comp_str = f"{ano:04d}-{mes:02d}"
+    inicio_mes = date(ano, mes, 1)
+    fim_mes = date(ano, mes, calendar.monthrange(ano, mes)[1])
+
     alunos_ativos = db.query(Aluno).filter(Aluno.ativo.is_(True)).count()
     alunos_inativos = db.query(Aluno).filter(Aluno.ativo.is_(False)).count()
     turmas_ativas = db.query(ClassGroup).filter(ClassGroup.ativa.is_(True)).all()
 
-    # Cálculo da taxa de ocupação das turmas (cada turma tem teto de 9)
-    capacidade_total = sum(t.capacidade_maxima for t in turmas_ativas) if turmas_ativas else 1
+    capacidade_total = sum(t.capacidade_maxima for t in turmas_ativas) if turmas_ativas else 0
     vagas_ocupadas = sum(contar_matriculas_ativas(db, t.id) for t in turmas_ativas)
-    taxa_ocupacao = round((vagas_ocupadas / capacidade_total) * 100, 2) if turmas_ativas else 0.0
+    taxa_ocupacao = round((vagas_ocupadas / capacidade_total) * 100, 2) if capacidade_total > 0 else 0.0
+
+    # Ticket médio e ponto de equilíbrio
+    ticket_medio = calcular_ticket_medio_escola(db)
+
+    # Receita esperada vs recebida no mês
+    faturas_mes = db.query(Invoice).filter(
+        Invoice.competencia == comp_str,
+        Invoice.status != StatusTitulo.CANCELADO.value,
+    ).all()
+    receita_esperada_mes = round(sum(float(i.valor_final or 0.0) for i in faturas_mes), 2)
+
+    pagamentos_mes = db.query(Payment).filter(
+        func.date(Payment.data_pagamento) >= inicio_mes,
+        func.date(Payment.data_pagamento) <= fim_mes,
+    ).all()
+    workshops_mes = db.query(WorkshopSession).options(
+        joinedload(WorkshopSession.participantes)
+    ).filter(
+        WorkshopSession.data_realizacao >= inicio_mes,
+        WorkshopSession.data_realizacao <= fim_mes,
+    ).all()
+    receita_ws_mes = sum(sum(float(pt.valor_pago or 0.0) for pt in (w.participantes or [])) for w in workshops_mes)
+    receita_recebida_mes = round(sum(float(p.valor_pago or 0.0) for p in pagamentos_mes) + receita_ws_mes, 2)
+    percentual_recebido_mes = (
+        round((receita_recebida_mes / receita_esperada_mes) * 100, 2)
+        if receita_esperada_mes > 0
+        else 0.0
+    )
+
+    # Despesas do mês (previstas e pagas)
+    despesas_comp = db.query(Expense).filter(
+        Expense.data_competencia >= inicio_mes,
+        Expense.data_competencia <= fim_mes,
+    ).all()
+    despesas_previstas_mes = round(
+        sum(float(d.valor_previsto if d.valor_previsto is not None else (d.valor or 0.0)) for d in despesas_comp),
+        2,
+    )
+
+    despesas_pagas_mes_rows = db.query(Expense).filter(
+        Expense.pago.is_(True),
+        Expense.data_pagamento >= inicio_mes,
+        Expense.data_pagamento <= fim_mes,
+    ).all()
+    despesas_pagas_mes = round(
+        sum(float(d.valor_pago if (d.valor_pago and d.valor_pago > 0) else (d.valor or 0.0)) for d in despesas_pagas_mes_rows),
+        2,
+    )
+
+    ponto_equilibrio_alunos = (
+        math.ceil(despesas_previstas_mes / ticket_medio)
+        if (despesas_previstas_mes > 0 and ticket_medio > 0)
+        else 0
+    )
+
+    lucro_mes = round(receita_recebida_mes - despesas_pagas_mes, 2)
+
+    # Lucro acumulado (regime de caixa histórico até fim do mês selecionado)
+    pagamentos_acum = db.query(Payment).filter(func.date(Payment.data_pagamento) <= fim_mes).all()
+    workshops_acum = db.query(WorkshopSession).options(
+        joinedload(WorkshopSession.participantes)
+    ).filter(WorkshopSession.data_realizacao <= fim_mes).all()
+    total_rec_acum = sum(float(p.valor_pago or 0.0) for p in pagamentos_acum) + sum(
+        sum(float(pt.valor_pago or 0.0) for pt in (w.participantes or [])) for w in workshops_acum
+    )
+    despesas_pagas_acum = db.query(Expense).filter(
+        Expense.pago.is_(True),
+        Expense.data_pagamento <= fim_mes,
+    ).all()
+    total_desp_acum = sum(
+        float(d.valor_pago if (d.valor_pago and d.valor_pago > 0) else (d.valor or 0.0))
+        for d in despesas_pagas_acum
+    )
+    lucro_acumulado = round(total_rec_acum - total_desp_acum, 2)
+
+    # Despesas atrasadas
+    despesas_em_aberto = db.query(Expense).filter(Expense.pago.is_(False)).all()
+    despesas_atrasadas = [
+        d for d in despesas_em_aberto
+        if (d.data_vencimento or d.data_competencia) < hoje
+    ]
+    despesas_atrasadas_qtd = len(despesas_atrasadas)
+    despesas_atrasadas_valor = round(
+        sum(float(d.valor_previsto if d.valor_previsto is not None else (d.valor or 0.0)) for d in despesas_atrasadas),
+        2,
+    )
 
     # Inadimplência
     inadimplentes = db.query(Invoice).filter(
@@ -62,10 +176,25 @@ def get_dashboard_summary(
     faturas_abertas = db.query(Invoice).filter(Invoice.status == StatusTitulo.PENDENTE.value).count()
 
     return DashboardSummary(
+        competencia=comp_str,
         total_alunos_ativos=alunos_ativos,
         total_alunos_inativos=alunos_inativos,
         total_turmas_ativas=len(turmas_ativas),
+        vagas_ocupadas=vagas_ocupadas,
+        capacidade_total=capacidade_total,
         taxa_ocupacao_geral_percentual=taxa_ocupacao,
+        ticket_medio=ticket_medio,
+        ponto_equilibrio_alunos=ponto_equilibrio_alunos,
+        ponto_equilibrio_valor=despesas_previstas_mes,
+        receita_esperada_mes=receita_esperada_mes,
+        receita_recebida_mes=receita_recebida_mes,
+        percentual_recebido_mes=percentual_recebido_mes,
+        despesas_previstas_mes=despesas_previstas_mes,
+        despesas_pagas_mes=despesas_pagas_mes,
+        lucro_mes=lucro_mes,
+        lucro_acumulado=lucro_acumulado,
+        despesas_atrasadas_qtd=despesas_atrasadas_qtd,
+        despesas_atrasadas_valor=despesas_atrasadas_valor,
         total_faturas_abertas=faturas_abertas,
         total_inadimplentes=total_inadimplentes,
         valor_total_inadimplente=valor_inadimplente

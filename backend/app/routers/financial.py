@@ -2,6 +2,7 @@ import calendar
 import csv
 import io
 import json
+import math
 import uuid
 from datetime import date, datetime, timezone
 from typing import List, Optional, Dict
@@ -20,6 +21,7 @@ from app.models.enrollment import Matricula, StatusMatricula
 from app.models.student import Aluno
 from app.models.guardian import Responsavel
 from app.models.course import Course
+from app.models.operations import ForecastSettings, WorkshopSession
 from app.models.user import User, UserRole
 from app.schemas.financial import (
     InvoiceCreate, InvoiceUpdate, InvoiceResponse,
@@ -30,6 +32,9 @@ from app.schemas.financial import (
     CashFlowSummary, DRESummary,
     DiscountsReportResponse, DiscountReportByTypeItem,
     DiscountReportByMonthItem, DiscountManualAuditItem,
+    MonthlyCashFlowItem, MonthlyCashFlowResponse,
+    ForecastSettingsUpdate, ForecastMonthItem, Forecast12MonthsResponse,
+    StudentMonthCell, StudentMonthlyRow, StudentMonthlyMatrixResponse,
 )
 from app.routers.auth import get_current_active_user, require_roles
 from app.routers.enrollments import gerar_faturas_matricula
@@ -1232,4 +1237,554 @@ def get_cost_centers_report(
         total_custo_realizado=round(total_cus_real, 2),
         total_resultado_realizado=round(total_rec_real - total_cus_real, 2),
         centros=itens,
+    )
+
+
+# ─── Helpers Analíticos Compartilhados ───────────────────────────────────────
+
+def calcular_ticket_medio_escola(db: Session) -> float:
+    """Calcula o ticket médio mensal líquido com base nas matrículas pagantes ativas (ou média dos cursos)."""
+    mats = db.query(Matricula).filter(
+        Matricula.status == StatusMatricula.ATIVA.value,
+        Matricula.aula_experimental.is_(False),
+    ).all()
+    valores: List[float] = []
+    for m in mats:
+        if getattr(m, "is_cortesia", False):
+            continue
+        dur = max(1, int(getattr(m, "duracao_contrato_meses", None) or m.quantidade_parcelas or 1))
+        if getattr(m, "valor_total_liquido", None) is not None and float(m.valor_total_liquido) > 0:
+            valores.append(float(m.valor_total_liquido) / dur)
+        elif float(m.valor_mensalidade or 0.0) > 0:
+            bruto = float(m.valor_mensalidade) * dur
+            desc = round(bruto * (float(m.desconto_percentual or 0.0) / 100.0), 2) + float(getattr(m, "desconto_valor_fixo", 0.0) or 0.0)
+            valores.append(max(0.0, bruto - desc) / dur)
+
+    if valores:
+        return round(sum(valores) / len(valores), 2)
+
+    cursos = db.query(Course).filter(Course.ativo.is_(True), Course.valor_mensalidade > 0).all()
+    if cursos:
+        return round(sum(float(c.valor_mensalidade) for c in cursos) / len(cursos), 2)
+    return 0.0
+
+
+def _payment_month(p: Payment) -> Optional[str]:
+    if not p.data_pagamento:
+        return None
+    if isinstance(p.data_pagamento, datetime):
+        return p.data_pagamento.strftime("%Y-%m")
+    return p.data_pagamento.strftime("%Y-%m")
+
+
+# ─── 1. Fluxo de Caixa (Regime de Caixa) Mês a Mês ────────────────────────────
+
+@router.get(
+    "/cash-flow-monthly",
+    response_model=MonthlyCashFlowResponse,
+    summary="Fluxo de caixa mês a mês (regime de caixa)"
+)
+def get_monthly_cash_flow(
+    ano: Optional[int] = Query(None, ge=2000, le=2100, description="Ano de referência (padrão ano atual)"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.COORDENACAO.value)),
+):
+    target_year = ano or date.today().year
+    inicio_ano = date(target_year, 1, 1)
+    fim_ano = date(target_year, 12, 31)
+    meses_keys = [f"{target_year:04d}-{m:02d}" for m in range(1, 13)]
+
+    pagamentos = db.query(Payment).filter(
+        func.date(Payment.data_pagamento) >= inicio_ano,
+        func.date(Payment.data_pagamento) <= fim_ano,
+    ).all()
+
+    workshops = db.query(WorkshopSession).options(
+        joinedload(WorkshopSession.participantes)
+    ).filter(
+        WorkshopSession.data_realizacao >= inicio_ano,
+        WorkshopSession.data_realizacao <= fim_ano,
+    ).all()
+
+    despesas_pagas = db.query(Expense).filter(
+        Expense.pago.is_(True),
+        Expense.data_pagamento >= inicio_ano,
+        Expense.data_pagamento <= fim_ano,
+    ).all()
+
+    categorias_set = set()
+    por_mes: Dict[str, Dict] = {
+        comp: {
+            "mensalidades_recebidas": 0.0,
+            "receitas_workshops": 0.0,
+            "pagamentos_professores": 0.0,
+            "pagamento_comercial": 0.0,
+            "despesas_por_categoria": {},
+        }
+        for comp in meses_keys
+    }
+
+    for p in pagamentos:
+        comp = _payment_month(p)
+        if comp in por_mes:
+            por_mes[comp]["mensalidades_recebidas"] += float(p.valor_pago or 0.0)
+
+    for ws in workshops:
+        comp = ws.data_realizacao.strftime("%Y-%m")
+        if comp in por_mes:
+            rec_ws = sum(float(pt.valor_pago or 0.0) for pt in (ws.participantes or []))
+            por_mes[comp]["receitas_workshops"] += rec_ws
+
+    for d in despesas_pagas:
+        if not d.data_pagamento:
+            continue
+        comp = d.data_pagamento.strftime("%Y-%m")
+        if comp not in por_mes:
+            continue
+        val = float(d.valor_pago if (d.valor_pago and d.valor_pago > 0) else (d.valor or 0.0))
+        if d.origem_tipo == "TEACHER_CLOSING" or d.categoria == "Pagamento Professor":
+            por_mes[comp]["pagamentos_professores"] += val
+        elif d.origem_tipo == "COMMERCIAL_PAYOUT" or d.categoria == "Comissão Comercial":
+            por_mes[comp]["pagamento_comercial"] += val
+        else:
+            cat = d.categoria or "Outros"
+            categorias_set.add(cat)
+            cats_map = por_mes[comp]["despesas_por_categoria"]
+            cats_map[cat] = round(cats_map.get(cat, 0.0) + val, 2)
+
+    categorias_ordenadas = sorted(categorias_set)
+    saldo_acumulado = 0.0
+    itens: List[MonthlyCashFlowItem] = []
+
+    for comp in meses_keys:
+        slot = por_mes[comp]
+        mens = round(slot["mensalidades_recebidas"], 2)
+        ws_rec = round(slot["receitas_workshops"], 2)
+        entradas = round(mens + ws_rec, 2)
+        profs = round(slot["pagamentos_professores"], 2)
+        com = round(slot["pagamento_comercial"], 2)
+        cats_completas = {cat: round(slot["despesas_por_categoria"].get(cat, 0.0), 2) for cat in categorias_ordenadas}
+        tot_cats = round(sum(cats_completas.values()), 2)
+        saidas = round(profs + com + tot_cats, 2)
+        saldo_mes = round(entradas - saidas, 2)
+        saldo_acumulado = round(saldo_acumulado + saldo_mes, 2)
+
+        itens.append(MonthlyCashFlowItem(
+            competencia=comp,
+            mensalidades_recebidas=mens,
+            receitas_workshops=ws_rec,
+            total_entradas=entradas,
+            pagamentos_professores=profs,
+            pagamento_comercial=com,
+            despesas_por_categoria=cats_completas,
+            total_despesas_categorias=tot_cats,
+            total_saidas=saidas,
+            saldo_mes=saldo_mes,
+            saldo_acumulado=saldo_acumulado,
+        ))
+
+    tot_entradas_ano = round(sum(i.total_entradas for i in itens), 2)
+    tot_profs_ano = round(sum(i.pagamentos_professores for i in itens), 2)
+    tot_com_ano = round(sum(i.pagamento_comercial for i in itens), 2)
+    tot_desp_ano = round(sum(i.total_despesas_categorias for i in itens), 2)
+    tot_saidas_ano = round(sum(i.total_saidas for i in itens), 2)
+
+    return MonthlyCashFlowResponse(
+        ano=target_year,
+        categorias_despesas=categorias_ordenadas,
+        total_entradas_ano=tot_entradas_ano,
+        total_professores_ano=tot_profs_ano,
+        total_comercial_ano=tot_com_ano,
+        total_despesas_ano=tot_desp_ano,
+        total_saidas_ano=tot_saidas_ano,
+        resultado_caixa_ano=round(tot_entradas_ano - tot_saidas_ano, 2),
+        meses=itens,
+    )
+
+
+# ─── 2. Previsão para os Próximos 12 Meses ───────────────────────────────────
+
+def _get_or_create_forecast_settings(db: Session) -> ForecastSettings:
+    cfg = db.query(ForecastSettings).filter(ForecastSettings.id == 1).first()
+    if not cfg:
+        cfg = ForecastSettings(
+            id=1,
+            novos_alunos_mes=2,
+            saidas_alunos_mes=0,
+            custo_fixo_mensal_estimado=0.0,
+            ticket_medio_override=0.0,
+        )
+        db.add(cfg)
+        db.commit()
+        db.refresh(cfg)
+    return cfg
+
+
+@router.get("/forecast/settings", response_model=ForecastSettingsUpdate, summary="Obter premissas de previsão 12 meses")
+def get_forecast_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.COORDENACAO.value)),
+):
+    cfg = _get_or_create_forecast_settings(db)
+    return ForecastSettingsUpdate(
+        novos_alunos_mes=cfg.novos_alunos_mes,
+        saidas_alunos_mes=cfg.saidas_alunos_mes,
+        custo_fixo_mensal_estimado=cfg.custo_fixo_mensal_estimado,
+        ticket_medio_override=cfg.ticket_medio_override,
+    )
+
+
+@router.put("/forecast/settings", response_model=ForecastSettingsUpdate, summary="Atualizar premissas de previsão 12 meses")
+def update_forecast_settings(
+    settings_in: ForecastSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.FINANCEIRO.value)),
+):
+    cfg = _get_or_create_forecast_settings(db)
+    cfg.novos_alunos_mes = settings_in.novos_alunos_mes
+    cfg.saidas_alunos_mes = settings_in.saidas_alunos_mes
+    cfg.custo_fixo_mensal_estimado = round(float(settings_in.custo_fixo_mensal_estimado), 2)
+    cfg.ticket_medio_override = round(float(settings_in.ticket_medio_override), 2)
+    db.commit()
+    db.refresh(cfg)
+    return ForecastSettingsUpdate(
+        novos_alunos_mes=cfg.novos_alunos_mes,
+        saidas_alunos_mes=cfg.saidas_alunos_mes,
+        custo_fixo_mensal_estimado=cfg.custo_fixo_mensal_estimado,
+        ticket_medio_override=cfg.ticket_medio_override,
+    )
+
+
+@router.get(
+    "/forecast-12m",
+    response_model=Forecast12MonthsResponse,
+    summary="Previsão de receita, saídas, ponto de equilíbrio, divisão 50% Dani/Helena e realizado x previsto"
+)
+def get_forecast_12_months(
+    mes_inicio: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="YYYY-MM inicial (padrão mês atual)"),
+    meses: int = Query(12, ge=1, le=24),
+    novos_alunos_mes: Optional[int] = Query(None, ge=0, le=200),
+    saidas_alunos_mes: Optional[int] = Query(None, ge=0, le=200),
+    custo_fixo_mensal_estimado: Optional[float] = Query(None, ge=0.0),
+    ticket_medio_override: Optional[float] = Query(None, ge=0.0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.COORDENACAO.value)),
+):
+    cfg = _get_or_create_forecast_settings(db)
+    premissas = ForecastSettingsUpdate(
+        novos_alunos_mes=novos_alunos_mes if novos_alunos_mes is not None else cfg.novos_alunos_mes,
+        saidas_alunos_mes=saidas_alunos_mes if saidas_alunos_mes is not None else cfg.saidas_alunos_mes,
+        custo_fixo_mensal_estimado=(
+            round(float(custo_fixo_mensal_estimado), 2)
+            if custo_fixo_mensal_estimado is not None
+            else float(cfg.custo_fixo_mensal_estimado or 0.0)
+        ),
+        ticket_medio_override=(
+            round(float(ticket_medio_override), 2)
+            if ticket_medio_override is not None
+            else float(cfg.ticket_medio_override or 0.0)
+        ),
+    )
+
+    hoje = date.today()
+    if mes_inicio:
+        y0, m0 = map(int, mes_inicio.split("-"))
+        base_date = date(y0, m0, 1)
+    else:
+        base_date = date(hoje.year, hoje.month, 1)
+    mes_inicio_str = base_date.strftime("%Y-%m")
+
+    alunos_ativos_atual = db.query(Aluno).filter(Aluno.ativo.is_(True)).count()
+    ticket_ref = premissas.ticket_medio_override if premissas.ticket_medio_override > 0 else calcular_ticket_medio_escola(db)
+
+    competencias = [_add_months(base_date, k).strftime("%Y-%m") for k in range(meses)]
+    comp_set = set(competencias)
+    janela_inicio = date(base_date.year, base_date.month, 1)
+    ultimo_mes_dt = _add_months(base_date, meses - 1)
+    janela_fim = date(ultimo_mes_dt.year, ultimo_mes_dt.month, calendar.monthrange(ultimo_mes_dt.year, ultimo_mes_dt.month)[1])
+
+    # 1) Faturas contratadas por competência
+    faturas = db.query(Invoice).filter(
+        Invoice.competencia.in_(comp_set),
+        Invoice.status != StatusTitulo.CANCELADO.value,
+    ).all()
+    rec_contratada_por_mes: Dict[str, float] = {c: 0.0 for c in competencias}
+    for inv in faturas:
+        rec_contratada_por_mes[inv.competencia] += float(inv.valor_final or 0.0)
+
+    # 2) Saídas contratuais (fim do contrato ou data_saida prevista)
+    matriculas_ativas = db.query(Matricula).filter(
+        Matricula.status.in_([StatusMatricula.ATIVA.value, StatusMatricula.TRANCADA.value]),
+        Matricula.aula_experimental.is_(False),
+    ).all()
+    saidas_contratuais_mes: Dict[str, int] = {c: 0 for c in competencias}
+    for mat in matriculas_ativas:
+        if mat.data_saida:
+            comp_saida = mat.data_saida.strftime("%Y-%m")
+        elif mat.data_inicio:
+            dur = max(1, int(getattr(mat, "duracao_contrato_meses", None) or mat.quantidade_parcelas or 12))
+            comp_saida = _add_months(mat.data_inicio, dur).strftime("%Y-%m")
+        else:
+            continue
+        if comp_saida in saidas_contratuais_mes:
+            saidas_contratuais_mes[comp_saida] += 1
+
+    # 3) Despesas lançadas na competência & linha base de despesas recorrentes
+    despesas_janela = db.query(Expense).filter(
+        Expense.data_competencia >= janela_inicio,
+        Expense.data_competencia <= janela_fim,
+    ).all()
+    desp_prev_por_mes: Dict[str, float] = {c: 0.0 for c in competencias}
+    for d in despesas_janela:
+        comp = d.data_competencia.strftime("%Y-%m")
+        if comp in desp_prev_por_mes:
+            desp_prev_por_mes[comp] += float(d.valor_previsto if d.valor_previsto is not None else (d.valor or 0.0))
+
+    # Linha base recorrente caso o mês futuro ainda não tenha despesas lançadas
+    curr_ym = hoje.strftime("%Y-%m")
+    recorrentes_base = db.query(Expense).filter(
+        Expense.recorrente.is_(True),
+        Expense.data_competencia >= date(hoje.year, hoje.month, 1),
+        Expense.data_competencia <= date(hoje.year, hoje.month, calendar.monthrange(hoje.year, hoje.month)[1]),
+    ).all()
+    soma_recorrentes = sum(float(r.valor_previsto if r.valor_previsto is not None else (r.valor or 0.0)) for r in recorrentes_base)
+    custo_base_fallback = max(float(premissas.custo_fixo_mensal_estimado or 0.0), soma_recorrentes)
+
+    # 4) Realizado por mês (regime de caixa)
+    pagamentos = db.query(Payment).filter(
+        func.date(Payment.data_pagamento) >= janela_inicio,
+        func.date(Payment.data_pagamento) <= janela_fim,
+    ).all()
+    rec_real_por_mes: Dict[str, float] = {c: 0.0 for c in competencias}
+    for p in pagamentos:
+        comp = _payment_month(p)
+        if comp in rec_real_por_mes:
+            rec_real_por_mes[comp] += float(p.valor_pago or 0.0)
+
+    despesas_pagas = db.query(Expense).filter(
+        Expense.pago.is_(True),
+        Expense.data_pagamento >= janela_inicio,
+        Expense.data_pagamento <= janela_fim,
+    ).all()
+    saidas_real_por_mes: Dict[str, float] = {c: 0.0 for c in competencias}
+    for d in despesas_pagas:
+        if d.data_pagamento:
+            comp = d.data_pagamento.strftime("%Y-%m")
+            if comp in saidas_real_por_mes:
+                saidas_real_por_mes[comp] += float(d.valor_pago if (d.valor_pago and d.valor_pago > 0) else (d.valor or 0.0))
+
+    alunos_cursor = alunos_ativos_atual
+    novos_acum = 0
+    saidas_extra_acum = 0
+    itens: List[ForecastMonthItem] = []
+
+    for comp in competencias:
+        s_contr = saidas_contratuais_mes[comp]
+        s_extra = int(premissas.saidas_alunos_mes or 0)
+        novos = int(premissas.novos_alunos_mes or 0)
+        saidas_tot = s_contr + s_extra
+
+        alunos_inicio = alunos_cursor
+        alunos_fim = max(0, alunos_inicio + novos - saidas_tot)
+        alunos_cursor = alunos_fim
+
+        novos_acum += novos
+        saidas_extra_acum += s_extra
+
+        rec_contr = round(rec_contratada_por_mes[comp], 2)
+        delta_alunos_proj = novos_acum - saidas_extra_acum
+        rec_prev = round(max(0.0, rec_contr + (delta_alunos_proj * ticket_ref)), 2)
+
+        desp_lancada = round(desp_prev_por_mes[comp], 2)
+        if premissas.custo_fixo_mensal_estimado > 0:
+            saidas_prev = round(max(desp_lancada, float(premissas.custo_fixo_mensal_estimado)), 2)
+        else:
+            saidas_prev = round(desp_lancada if desp_lancada > 0 else custo_base_fallback, 2)
+
+        res_prev = round(rec_prev - saidas_prev, 2)
+        pe_alunos = math.ceil(saidas_prev / ticket_ref) if (saidas_prev > 0 and ticket_ref > 0) else 0
+        lucro_socio = round(max(0.0, res_prev) * 0.5, 2)
+
+        rec_real = round(rec_real_por_mes[comp], 2)
+        sai_real = round(saidas_real_por_mes[comp], 2)
+        res_real = round(rec_real - sai_real, 2)
+        variacao = round(res_real - res_prev, 2)
+
+        itens.append(ForecastMonthItem(
+            competencia=comp,
+            alunos_ativos_inicio=alunos_inicio,
+            novos_alunos_previstos=novos,
+            saidas_contratuais=s_contr,
+            saidas_previstas=saidas_tot,
+            alunos_ativos_fim=alunos_fim,
+            receita_contratada=rec_contr,
+            receita_prevista=rec_prev,
+            saidas_previstas_valor=saidas_prev,
+            resultado_previsto=res_prev,
+            ponto_equilibrio_alunos=pe_alunos,
+            lucro_dani=lucro_socio,
+            lucro_helena=lucro_socio,
+            receita_realizada=rec_real,
+            saidas_realizadas=sai_real,
+            resultado_realizado=res_real,
+            variacao_resultado=variacao,
+        ))
+
+    rec_prev_tot = round(sum(i.receita_prevista for i in itens), 2)
+    sai_prev_tot = round(sum(i.saidas_previstas_valor for i in itens), 2)
+    res_prev_tot = round(sum(i.resultado_previsto for i in itens), 2)
+    rec_real_tot = round(sum(i.receita_realizada for i in itens), 2)
+    sai_real_tot = round(sum(i.saidas_realizadas for i in itens), 2)
+    res_real_tot = round(sum(i.resultado_realizado for i in itens), 2)
+
+    return Forecast12MonthsResponse(
+        mes_inicio=mes_inicio_str,
+        alunos_ativos_atual=alunos_ativos_atual,
+        ticket_medio_referencia=round(ticket_ref, 2),
+        premissas=premissas,
+        receita_prevista_total=rec_prev_tot,
+        saidas_previstas_total=sai_prev_tot,
+        resultado_previsto_total=res_prev_tot,
+        lucro_dani_total=round(sum(i.lucro_dani for i in itens), 2),
+        lucro_helena_total=round(sum(i.lucro_helena for i in itens), 2),
+        receita_realizada_total=rec_real_tot,
+        saidas_realizadas_total=sai_real_tot,
+        resultado_realizado_total=res_real_tot,
+        meses=itens,
+    )
+
+
+# ─── 4. Controle Mensal por Aluno (Grade Matricial) ──────────────────────────
+
+@router.get(
+    "/student-monthly-matrix",
+    response_model=StudentMonthlyMatrixResponse,
+    summary="Grade matricial mensal por aluno (status e valor pago em cada mês)"
+)
+def get_student_monthly_matrix(
+    ano: Optional[int] = Query(None, ge=2000, le=2100),
+    apenas_ativos: bool = Query(True),
+    busca: Optional[str] = Query(None),
+    turma_id: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(
+        UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value
+    )),
+):
+    target_year = ano or date.today().year
+    hoje = date.today()
+    meses_keys = [f"{target_year:04d}-{m:02d}" for m in range(1, 13)]
+
+    alunos_query = db.query(Aluno).options(joinedload(Aluno.responsavel))
+    if apenas_ativos:
+        alunos_query = alunos_query.filter(Aluno.ativo.is_(True))
+    if busca and busca.strip():
+        alunos_query = alunos_query.filter(Aluno.nome.ilike(f"%{busca.strip()}%"))
+    alunos = alunos_query.order_by(Aluno.nome.asc()).all()
+
+    matriculas = db.query(Matricula).options(joinedload(Matricula.turma)).filter(
+        Matricula.status != StatusMatricula.CANCELADA.value
+    ).all()
+    turmas_por_aluno: Dict[int, List[str]] = {}
+    cortesia_aluno_ids = set()
+    alunos_na_turma = set()
+    for m in matriculas:
+        if turma_id is not None and m.turma_id == turma_id:
+            alunos_na_turma.add(m.aluno_id)
+        if m.turma:
+            lst = turmas_por_aluno.setdefault(m.aluno_id, [])
+            if m.turma.nome not in lst:
+                lst.append(m.turma.nome)
+        if getattr(m, "is_cortesia", False):
+            cortesia_aluno_ids.add(m.aluno_id)
+
+    if turma_id is not None:
+        alunos = [a for a in alunos if a.id in alunos_na_turma]
+
+    faturas = db.query(Invoice).options(joinedload(Invoice.pagamentos)).filter(
+        Invoice.competencia.like(f"{target_year:04d}-%"),
+        Invoice.status != StatusTitulo.CANCELADO.value,
+    ).all()
+
+    inv_map: Dict[tuple, List[Invoice]] = {}
+    for inv in faturas:
+        inv_map.setdefault((inv.aluno_id, inv.competencia), []).append(inv)
+
+    tot_prev_mes: Dict[str, float] = {m: 0.0 for m in meses_keys}
+    tot_pago_mes: Dict[str, float] = {m: 0.0 for m in meses_keys}
+    rows: List[StudentMonthlyRow] = []
+
+    for aluno in alunos:
+        celulas: Dict[str, StudentMonthCell] = {}
+        tot_prev_aluno = 0.0
+        tot_pago_aluno = 0.0
+
+        for comp in meses_keys:
+            invs = inv_map.get((aluno.id, comp), [])
+            if not invs:
+                st = "CORTESIA" if aluno.id in cortesia_aluno_ids else "SEM_COBRANCA"
+                celulas[comp] = StudentMonthCell(
+                    competencia=comp,
+                    status=st,
+                    valor_previsto=0.0,
+                    valor_pago=0.0,
+                    quantidade_faturas=0,
+                    forma_pagamento=None,
+                )
+                continue
+
+            v_prev = round(sum(float(i.valor_final or 0.0) for i in invs), 2)
+            v_pago = 0.0
+            formas = []
+            tem_atrasado = False
+            for i in invs:
+                if i.pagamentos:
+                    v_pago += sum(float(pt.valor_pago or 0.0) for pt in i.pagamentos)
+                elif i.status == StatusTitulo.PAGO.value:
+                    v_pago += float(i.valor_final or 0.0)
+                if i.forma_pagamento and i.forma_pagamento not in formas:
+                    formas.append(i.forma_pagamento)
+                if i.status == StatusTitulo.ATRASADO.value or (i.status == StatusTitulo.PENDENTE.value and i.data_vencimento < hoje):
+                    tem_atrasado = True
+            v_pago = round(v_pago, 2)
+
+            if all(i.status == StatusTitulo.PAGO.value for i in invs) or (v_prev > 0 and v_pago >= v_prev):
+                st = "PAGO"
+            elif tem_atrasado:
+                st = "ATRASADO"
+            elif v_pago > 0:
+                st = "PARCIAL"
+            else:
+                st = "PENDENTE"
+
+            tot_prev_aluno += v_prev
+            tot_pago_aluno += v_pago
+            tot_prev_mes[comp] = round(tot_prev_mes[comp] + v_prev, 2)
+            tot_pago_mes[comp] = round(tot_pago_mes[comp] + v_pago, 2)
+
+            celulas[comp] = StudentMonthCell(
+                competencia=comp,
+                status=st,
+                valor_previsto=v_prev,
+                valor_pago=v_pago,
+                quantidade_faturas=len(invs),
+                forma_pagamento=", ".join(formas) if formas else None,
+            )
+
+        rows.append(StudentMonthlyRow(
+            aluno_id=aluno.id,
+            aluno_nome=aluno.nome,
+            responsavel_nome=aluno.responsavel.nome if aluno.responsavel else None,
+            turmas=turmas_por_aluno.get(aluno.id, []),
+            total_previsto_ano=round(tot_prev_aluno, 2),
+            total_pago_ano=round(tot_pago_aluno, 2),
+            celulas=celulas,
+        ))
+
+    return StudentMonthlyMatrixResponse(
+        ano=target_year,
+        meses=meses_keys,
+        totais_previsto_mes=tot_prev_mes,
+        totais_pago_mes=tot_pago_mes,
+        alunos=rows,
     )

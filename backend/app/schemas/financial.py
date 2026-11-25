@@ -243,3 +243,101 @@ class DiscountsReportResponse(BaseModel):
     por_tipo: List[DiscountReportByTypeItem]
     por_mes: List[DiscountReportByMonthItem]
     alteracoes_manuais: List[DiscountManualAuditItem]
+
+
+# ─── Visões Gerenciais: Fluxo Mês a Mês, Previsão 12 Meses e Matriz Aluno ──────
+
+class MonthlyCashFlowItem(BaseModel):
+    competencia: str
+    mensalidades_recebidas: float
+    receitas_workshops: float = 0.0
+    total_entradas: float
+    pagamentos_professores: float
+    pagamento_comercial: float
+    despesas_por_categoria: Dict[str, float]
+    total_despesas_categorias: float
+    total_saidas: float
+    saldo_mes: float
+    saldo_acumulado: float
+
+
+class MonthlyCashFlowResponse(BaseModel):
+    ano: int
+    categorias_despesas: List[str]
+    total_entradas_ano: float
+    total_professores_ano: float
+    total_comercial_ano: float
+    total_despesas_ano: float
+    total_saidas_ano: float
+    resultado_caixa_ano: float
+    meses: List[MonthlyCashFlowItem]
+
+
+class ForecastSettingsUpdate(BaseModel):
+    novos_alunos_mes: int = Field(2, ge=0, le=200)
+    saidas_alunos_mes: int = Field(0, ge=0, le=200)
+    custo_fixo_mensal_estimado: float = Field(0.0, ge=0.0)
+    ticket_medio_override: float = Field(0.0, ge=0.0)
+
+
+class ForecastMonthItem(BaseModel):
+    competencia: str
+    alunos_ativos_inicio: int
+    novos_alunos_previstos: int
+    saidas_contratuais: int
+    saidas_previstas: int
+    alunos_ativos_fim: int
+    receita_contratada: float
+    receita_prevista: float
+    saidas_previstas_valor: float
+    resultado_previsto: float
+    ponto_equilibrio_alunos: int
+    lucro_dani: float
+    lucro_helena: float
+    receita_realizada: float
+    saidas_realizadas: float
+    resultado_realizado: float
+    variacao_resultado: float
+
+
+class Forecast12MonthsResponse(BaseModel):
+    mes_inicio: str
+    alunos_ativos_atual: int
+    ticket_medio_referencia: float
+    premissas: ForecastSettingsUpdate
+    receita_prevista_total: float
+    saidas_previstas_total: float
+    resultado_previsto_total: float
+    lucro_dani_total: float
+    lucro_helena_total: float
+    receita_realizada_total: float
+    saidas_realizadas_total: float
+    resultado_realizado_total: float
+    meses: List[ForecastMonthItem]
+
+
+class StudentMonthCell(BaseModel):
+    competencia: str
+    status: str  # PAGO, PENDENTE, ATRASADO, PARCIAL, CORTESIA, SEM_COBRANCA
+    valor_previsto: float
+    valor_pago: float
+    quantidade_faturas: int
+    forma_pagamento: Optional[str] = None
+
+
+class StudentMonthlyRow(BaseModel):
+    aluno_id: int
+    aluno_nome: str
+    responsavel_nome: Optional[str] = None
+    turmas: List[str] = []
+    total_previsto_ano: float
+    total_pago_ano: float
+    celulas: Dict[str, StudentMonthCell]
+
+
+class StudentMonthlyMatrixResponse(BaseModel):
+    ano: int
+    meses: List[str]
+    totais_previsto_mes: Dict[str, float]
+    totais_pago_mes: Dict[str, float]
+    alunos: List[StudentMonthlyRow]

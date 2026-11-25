@@ -11,7 +11,7 @@ from app.models.user import User, UserRole
 from app.models.room import Room
 from app.models.course import Course
 from app.models.class_group import ClassGroup, FaixaEtaria
-from app.models.operations import CommercialConfig
+from app.models.operations import CommercialConfig, ForecastSettings
 from app.services.discount_policy import ensure_default_discount_policies
 from app.services.cost_centers import ensure_default_cost_centers, get_general_cost_center_id
 
@@ -499,6 +499,17 @@ def init_db(db: Session) -> None:
             comissao_por_matricula=0.0,
             percentual_sobre_vendas=0.0,
             ativo=True,
+        ))
+        db.commit()
+
+    # --- Premissas padrão de Previsão 12 Meses ---
+    if not db.query(ForecastSettings).filter(ForecastSettings.id == 1).first():
+        db.add(ForecastSettings(
+            id=1,
+            novos_alunos_mes=2,
+            saidas_alunos_mes=0,
+            custo_fixo_mensal_estimado=0.0,
+            ticket_medio_override=0.0,
         ))
         db.commit()
 

@@ -14,6 +14,11 @@ import {
   CommercialPayoutSection,
   PartnerAtelierSection,
 } from './components/OperationalModules';
+import {
+  MonthlyCashFlowSection,
+  Forecast12MonthsSection,
+  StudentMonthlyMatrixSection,
+} from './components/AnalyticsModules';
 
 export default function App() {
   const [user, setUser] = useState(authStorage.getUser());
@@ -1505,11 +1510,11 @@ export default function App() {
           {/* TAB 1: DASHBOARD */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
                     <span className="text-xs font-semibold text-slate-400 uppercase">Alunos Ativos</span>
-                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{dashboard?.total_alunos_ativos || students.length}</h3>
+                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{dashboard?.total_alunos_ativos ?? students.length}</h3>
                     <p className="text-xs text-emerald-600 mt-1">{enrollments.filter(e => e.status === 'ATIVA').length} matrículas ativas</p>
                   </div>
                   <div className="w-12 h-12 bg-amber-50 text-amber-700 rounded-xl flex items-center justify-center">
@@ -1519,20 +1524,11 @@ export default function App() {
 
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-semibold text-slate-400 uppercase">Modalidades / Cursos</span>
-                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{courses.length}</h3>
-                    <p className="text-xs text-slate-500 mt-1">{teachers.length} professores ativos</p>
-                  </div>
-                  <div className="w-12 h-12 bg-blue-50 text-blue-700 rounded-xl flex items-center justify-center">
-                    <BookOpen className="w-6 h-6" />
-                  </div>
-                </div>
-
-                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
-                  <div>
                     <span className="text-xs font-semibold text-slate-400 uppercase">Taxa de Ocupação</span>
-                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{dashboard?.taxa_ocupacao_geral_percentual || 0}%</h3>
-                    <p className="text-xs text-amber-600 mt-1">Teto: máx. 9 por sala</p>
+                    <h3 className="text-2xl font-bold text-slate-800 mt-1">{dashboard?.taxa_ocupacao_geral_percentual ?? 0}%</h3>
+                    <p className="text-xs text-slate-600 mt-1">
+                      {dashboard?.vagas_ocupadas ?? 0} / {dashboard?.capacidade_total ?? 0} vagas ocupadas
+                    </p>
                   </div>
                   <div className="w-12 h-12 bg-emerald-50 text-emerald-700 rounded-xl flex items-center justify-center">
                     <ShieldCheck className="w-6 h-6" />
@@ -1541,12 +1537,79 @@ export default function App() {
 
                 <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-semibold text-slate-400 uppercase">Inadimplência</span>
-                    <h3 className="text-2xl font-bold text-red-600 mt-1">R$ {dashboard?.valor_total_inadimplente || '0.00'}</h3>
-                    <p className="text-xs text-red-500 mt-1">{defaulters.length} títulos em aberto</p>
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Ticket Médio & Equilíbrio</span>
+                    <h3 className="text-2xl font-bold text-slate-800 mt-1">R$ {Number(dashboard?.ticket_medio || 0).toFixed(2)}</h3>
+                    <p className="text-xs text-amber-700 mt-1 font-medium">
+                      Ponto de equilíbrio: <b>{dashboard?.ponto_equilibrio_alunos ?? 0} alunos</b>
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 bg-blue-50 text-blue-700 rounded-xl flex items-center justify-center">
+                    <BookOpen className="w-6 h-6" />
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Despesas Atrasadas & Inadimpl.</span>
+                    <h3 className="text-2xl font-bold text-red-600 mt-1">R$ {Number(dashboard?.despesas_atrasadas_valor || 0).toFixed(2)}</h3>
+                    <p className="text-xs text-red-500 mt-1">
+                      {dashboard?.despesas_atrasadas_qtd ?? 0} despesas atras. • Inadimpl: R$ {Number(dashboard?.valor_total_inadimplente || 0).toFixed(2)}
+                    </p>
                   </div>
                   <div className="w-12 h-12 bg-red-50 text-red-700 rounded-xl flex items-center justify-center">
                     <AlertTriangle className="w-6 h-6" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Indicadores Financeiros Executivos do Mês e Acumulado */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Receita Esperada vs. Recebida ({dashboard?.competencia || 'Mês'})</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+                      {Number(dashboard?.percentual_recebido_mes || 0).toFixed(1)}% recebido
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-xl font-bold text-emerald-700">R$ {Number(dashboard?.receita_recebida_mes || 0).toFixed(2)}</span>
+                    <span className="text-xs text-slate-500">de R$ {Number(dashboard?.receita_esperada_mes || 0).toFixed(2)} esperado</span>
+                  </div>
+                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-emerald-600 h-2 rounded-full"
+                      style={{ width: `${Math.min(100, Number(dashboard?.percentual_recebido_mes || 0))}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Lucro do Mês (Caixa)</span>
+                    <h3 className={`text-2xl font-bold mt-1 ${(dashboard?.lucro_mes || 0) >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                      R$ {Number(dashboard?.lucro_mes || 0).toFixed(2)}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Saídas pagas no mês: R$ {Number(dashboard?.despesas_pagas_mes || 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 bg-emerald-50 text-emerald-700 rounded-xl flex items-center justify-center">
+                    <TrendingUp className="w-6 h-6" />
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Lucro Acumulado (Caixa)</span>
+                    <h3 className={`text-2xl font-bold mt-1 ${(dashboard?.lucro_acumulado || 0) >= 0 ? 'text-slate-800' : 'text-red-600'}`}>
+                      R$ {Number(dashboard?.lucro_acumulado || 0).toFixed(2)}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Despesas previstas no mês: R$ {Number(dashboard?.despesas_previstas_mes || 0).toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 bg-amber-50 text-amber-700 rounded-xl flex items-center justify-center">
+                    <DollarSign className="w-6 h-6" />
                   </div>
                 </div>
               </div>
@@ -2399,6 +2462,9 @@ export default function App() {
               <div className="flex border-b border-slate-200 gap-2 overflow-x-auto bg-white px-4 pt-3 rounded-t-xl">
                 {[
                   { id: 'receber', label: 'Receitas & DRE' },
+                  { id: 'fluxo', label: 'Fluxo de Caixa Mensal' },
+                  { id: 'previsao', label: 'Previsão 12 Meses' },
+                  { id: 'matriz', label: 'Controle Mensal p/ Aluno' },
                   { id: 'despesas', label: 'Despesas (Contas a Pagar)' },
                   { id: 'centros', label: 'Centros de Custo' },
                   { id: 'professores', label: 'Pagamento Professores' },
@@ -2420,6 +2486,15 @@ export default function App() {
                 ))}
               </div>
 
+              {financialSubTab === 'fluxo' && (
+                <MonthlyCashFlowSection showToast={showToast} />
+              )}
+              {financialSubTab === 'previsao' && (
+                <Forecast12MonthsSection showToast={showToast} />
+              )}
+              {financialSubTab === 'matriz' && (
+                <StudentMonthlyMatrixSection showToast={showToast} classes={classes} />
+              )}
               {financialSubTab === 'despesas' && (
                 <ExpensesSection showToast={showToast} onRefreshDRE={loadDashboardData} />
               )}
