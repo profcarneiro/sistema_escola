@@ -7,6 +7,13 @@ import {
   Search, UserCheck, Shield, ChevronDown, Filter, BarChart2, Cloud, Upload
 } from 'lucide-react';
 import { api, authStorage } from './services/api';
+import {
+  ExpensesSection,
+  CostCentersSection,
+  TeacherPayoutsSection,
+  CommercialPayoutSection,
+  PartnerAtelierSection,
+} from './components/OperationalModules';
 
 export default function App() {
   const [user, setUser] = useState(authStorage.getUser());
@@ -116,13 +123,17 @@ export default function App() {
   const [invoiceYearFilter, setInvoiceYearFilter] = useState('TODOS');
   const [invoiceStudentFilter, setInvoiceStudentFilter] = useState('TODOS');
   const [financialDre, setFinancialDre] = useState(null);
+  const [financialSubTab, setFinancialSubTab] = useState('receber'); // 'receber' | 'despesas' | 'centros' | 'professores' | 'comercial' | 'atelie'
 
   // Sub-abas e relatórios de Frequência / Diário
-  const [attendanceSubTab, setAttendanceSubTab] = useState('chamada'); // 'chamada' | 'turmas' | 'aluno'
+  const [attendanceSubTab, setAttendanceSubTab] = useState('chamada'); // 'chamada' | 'turmas' | 'aluno' | 'mensal'
   const [attendanceClassesSummary, setAttendanceClassesSummary] = useState([]);
   const [selectedStudentForHistory, setSelectedStudentForHistory] = useState('');
   const [studentAttendanceHistory, setStudentAttendanceHistory] = useState(null);
   const [loadingStudentHistory, setLoadingStudentHistory] = useState(false);
+  const [missingCallAlerts, setMissingCallAlerts] = useState([]);
+  const [monthlyStudentsFreq, setMonthlyStudentsFreq] = useState([]);
+  const [monthlyFreqComp, setMonthlyFreqComp] = useState(() => new Date().toISOString().slice(0, 7));
 
   const toLocalISODate = (d = new Date()) => {
     const yyyy = d.getFullYear();
@@ -152,6 +163,7 @@ export default function App() {
   const [lessonMaterials, setLessonMaterials] = useState('');
   const [attendanceRecords, setAttendanceRecords] = useState({});
   const [classLessonsHistory, setClassLessonsHistory] = useState([]);
+  const [lessonCanceledByTeacher, setLessonCanceledByTeacher] = useState(false);
 
   // Permissões
   const isProfessor = user?.role === 'Professor' || user?.role === 'PROFESSOR';
@@ -226,6 +238,7 @@ export default function App() {
 
       if (activeTab === 'attendance') {
         api.getAttendanceClassesSummary().then(cs => setAttendanceClassesSummary(cs)).catch(() => setAttendanceClassesSummary([]));
+        api.getMissingCallAlerts().then(al => setMissingCallAlerts(al || [])).catch(() => setMissingCallAlerts([]));
       }
 
       if (activeTab === 'backups') {
@@ -315,14 +328,19 @@ export default function App() {
     }
   }, [selectedStudentForHistory]);
 
-  // Se trocar a aba de frequência para turmas, atualiza resumo
+  // Se trocar a aba de frequência para turmas ou mensal, atualiza relatório
   useEffect(() => {
     if (activeTab === 'attendance' && attendanceSubTab === 'turmas') {
       api.getAttendanceClassesSummary()
         .then(cs => setAttendanceClassesSummary(cs))
         .catch(() => setAttendanceClassesSummary([]));
     }
-  }, [activeTab, attendanceSubTab]);
+    if (activeTab === 'attendance' && attendanceSubTab === 'mensal' && monthlyFreqComp) {
+      api.getMonthlyStudentsAttendance(monthlyFreqComp)
+        .then(res => setMonthlyStudentsFreq(res || []))
+        .catch(() => setMonthlyStudentsFreq([]));
+    }
+  }, [activeTab, attendanceSubTab, monthlyFreqComp]);
 
   // Se trocar a turma na frequência, carrega histórico de aulas
   useEffect(() => {
@@ -1096,7 +1114,8 @@ export default function App() {
         tema_aula: lessonTopic || 'Aula Regular',
         conteudo_programatico: lessonContent || null,
         materiais_utilizados: lessonMaterials || null,
-        observacoes: null
+        observacoes: null,
+        cancelada_professor: lessonCanceledByTeacher,
       });
 
       const turmEnr = enrollments.filter(e => e.turma_id === turmaObj.id && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL'));
@@ -1107,17 +1126,19 @@ export default function App() {
         motivo_justificativa: null
       }));
 
-      if (frequencias.length > 0) {
+      if (frequencias.length > 0 && !lessonCanceledByTeacher) {
         await api.recordAttendance(lesson.id, frequencias);
       }
 
-      showToast('Diário de classe e chamada salvos com sucesso!');
+      showToast(lessonCanceledByTeacher ? 'Aula registrada como cancelada pelo professor.' : 'Diário de classe e chamada salvos com sucesso!');
       setLessonTopic('');
       setLessonContent('');
       setLessonMaterials('');
+      setLessonCanceledByTeacher(false);
 
       const updatedLessons = await api.getLessons(turmaObj.id);
       setClassLessonsHistory(updatedLessons);
+      api.getMissingCallAlerts().then(al => setMissingCallAlerts(al || [])).catch(() => {});
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -2374,6 +2395,54 @@ export default function App() {
 
             return (
             <div className="space-y-6">
+              {/* Sub-navegação Operacional & Financeira */}
+              <div className="flex border-b border-slate-200 gap-2 overflow-x-auto bg-white px-4 pt-3 rounded-t-xl">
+                {[
+                  { id: 'receber', label: 'Receitas & DRE' },
+                  { id: 'despesas', label: 'Despesas (Contas a Pagar)' },
+                  { id: 'centros', label: 'Centros de Custo' },
+                  { id: 'professores', label: 'Pagamento Professores' },
+                  { id: 'comercial', label: 'Pagamento Comercial' },
+                  { id: 'atelie', label: 'Ateliê - Parceria' },
+                ].map(st => (
+                  <button
+                    key={st.id}
+                    type="button"
+                    onClick={() => setFinancialSubTab(st.id)}
+                    className={`pb-3 px-3 text-xs font-bold border-b-2 whitespace-nowrap transition ${
+                      financialSubTab === st.id
+                        ? 'border-amber-700 text-amber-900'
+                        : 'border-transparent text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    {st.label}
+                  </button>
+                ))}
+              </div>
+
+              {financialSubTab === 'despesas' && (
+                <ExpensesSection showToast={showToast} onRefreshDRE={loadDashboardData} />
+              )}
+              {financialSubTab === 'centros' && (
+                <CostCentersSection showToast={showToast} />
+              )}
+              {financialSubTab === 'professores' && (
+                <TeacherPayoutsSection
+                  showToast={showToast}
+                  teachers={teachers}
+                  courses={courses}
+                  onRefreshDRE={loadDashboardData}
+                />
+              )}
+              {financialSubTab === 'comercial' && (
+                <CommercialPayoutSection showToast={showToast} onRefreshDRE={loadDashboardData} />
+              )}
+              {financialSubTab === 'atelie' && (
+                <PartnerAtelierSection showToast={showToast} courses={courses} onRefreshDRE={loadDashboardData} />
+              )}
+
+              {financialSubTab === 'receber' && (
+                <>
               {/* DRE do Período */}
               {activeDre && (
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
@@ -2770,6 +2839,8 @@ export default function App() {
                   )}
                 </div>
               )}
+                </>
+              )}
             </div>
             );
           })()}
@@ -2999,11 +3070,50 @@ export default function App() {
                 >
                   <Users className="w-4 h-4" /> Frequência por Aluno
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setAttendanceSubTab('mensal')}
+                  className={`pb-3 px-4 text-xs font-bold transition border-b-2 flex items-center gap-1.5 whitespace-nowrap ${
+                    attendanceSubTab === 'mensal'
+                      ? 'border-amber-700 text-amber-900'
+                      : 'border-transparent text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  <FileText className="w-4 h-4" /> Relatório Mensal p/ Aluno
+                </button>
               </div>
 
               {/* Sub-tab 1: Lançar Diário & Presença */}
               {attendanceSubTab === 'chamada' && (
                 <>
+                  {missingCallAlerts.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-sm">
+                      <div className="flex items-center gap-2 text-amber-900 font-bold text-sm mb-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600" />
+                        Alerta: {missingCallAlerts.length} aula(s) ocorrida(s) sem chamada lançada neste mês
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 max-h-40 overflow-y-auto text-xs">
+                        {missingCallAlerts.slice(0, 12).map((al, i) => (
+                          <div key={i} className="bg-white border border-amber-200 rounded-lg p-2 flex justify-between items-center gap-2">
+                            <div>
+                              <strong className="text-slate-800 block">{al.turma_nome}</strong>
+                              <span className="text-slate-500">{formatDateBR(al.data_referencia)} • {al.professor_nome || 'Sem professor'}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedClassForAttendance(String(al.turma_id));
+                                setAttendanceDate(al.data_referencia);
+                              }}
+                              className="px-2 py-1 bg-amber-600 text-white rounded font-semibold shrink-0"
+                            >
+                              Lançar
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
                     <h3 className="font-bold text-slate-800 text-lg">Diário de Classe & Chamada Semanal</h3>
                     <p className="text-xs text-slate-500">Selecione uma turma para registrar o tema trabalhado e a presença dos alunos matriculados.</p>
@@ -3074,6 +3184,15 @@ export default function App() {
                         ></textarea>
                       </div>
 
+                      <label className="inline-flex items-center gap-2 text-xs font-semibold text-red-700 cursor-pointer bg-red-50 px-3 py-2 rounded-lg border border-red-200">
+                        <input
+                          type="checkbox"
+                          checked={lessonCanceledByTeacher}
+                          onChange={(e) => setLessonCanceledByTeacher(e.target.checked)}
+                        />
+                        Aula cancelada pelo professor (sem pagamento no fechamento)
+                      </label>
+
                       {/* Lista de Chamada Interativa */}
                       {selectedClassForAttendance && (
                         <div className="mt-6 pt-4 border-t border-slate-200">
@@ -3136,7 +3255,9 @@ export default function App() {
                               <strong className="text-slate-800 block text-sm">{l.tema_aula}</strong>
                               <span className="text-slate-500">Data: {formatDateBR(l.data_aula)} • {l.materiais_utilizados || 'Sem materiais'}</span>
                             </div>
-                            <span className="px-2 py-1 rounded bg-slate-200 text-slate-700 font-semibold">Registrada</span>
+                            <span className={`px-2 py-1 rounded font-semibold ${l.cancelada_professor ? 'bg-red-100 text-red-700' : 'bg-slate-200 text-slate-700'}`}>
+                              {l.cancelada_professor ? 'Cancelada p/ Professor' : 'Registrada'}
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -3323,6 +3444,54 @@ export default function App() {
                       </div>
                     );
                   })()}
+                </div>
+              )}
+
+              {/* Sub-tab 4: Relatório Mensal de Frequência por Aluno */}
+              {attendanceSubTab === 'mensal' && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <div className="flex flex-wrap justify-between items-center gap-3">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-lg">Frequência Mensal por Aluno (Presenças x Faltas)</h3>
+                      <p className="text-xs text-slate-500">Consolidado mensal utilizado para acompanhamento pedagógico e repasse de professores.</p>
+                    </div>
+                    <input
+                      type="month"
+                      value={monthlyFreqComp}
+                      onChange={(e) => setMonthlyFreqComp(e.target.value)}
+                      className="px-3 py-1.5 border rounded-lg text-xs"
+                    />
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-600">
+                      <thead className="bg-slate-50 text-[11px] uppercase text-slate-500 border-y">
+                        <tr>
+                          <th className="px-4 py-2.5">Aluno</th>
+                          <th className="px-4 py-2.5">Turma</th>
+                          <th className="px-4 py-2.5 text-center">Presenças</th>
+                          <th className="px-4 py-2.5 text-center">Faltas</th>
+                          <th className="px-4 py-2.5 text-center">Justificadas</th>
+                          <th className="px-4 py-2.5 text-center">Reposições</th>
+                          <th className="px-4 py-2.5 text-right">Taxa %</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {monthlyStudentsFreq.length === 0 ? (
+                          <tr><td colSpan="7" className="px-4 py-6 text-center text-slate-400">Nenhum registro encontrado nesta competência.</td></tr>
+                        ) : monthlyStudentsFreq.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50">
+                            <td className="px-4 py-2.5 font-semibold text-slate-800">{item.aluno_nome}</td>
+                            <td className="px-4 py-2.5">{item.turma_nome}</td>
+                            <td className="px-4 py-2.5 text-center text-emerald-700 font-bold">{item.presencas}</td>
+                            <td className="px-4 py-2.5 text-center text-red-700 font-bold">{item.faltas}</td>
+                            <td className="px-4 py-2.5 text-center text-amber-700">{item.justificadas}</td>
+                            <td className="px-4 py-2.5 text-center text-indigo-700">{item.reposicoes}</td>
+                            <td className="px-4 py-2.5 text-right font-bold">{item.taxa_presenca_percentual}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>

@@ -37,6 +37,7 @@ class Lesson(Base):
     conteudo_programatico = Column(Text, nullable=True)
     materiais_utilizados = Column(String(255), nullable=True)
     observacoes = Column(Text, nullable=True)
+    cancelada_professor = Column(Boolean, default=False, nullable=False)
     criada_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     turma = relationship("ClassGroup")
@@ -57,6 +58,8 @@ class Attendance(Base):
     matricula_id = Column(Integer, ForeignKey("matriculas.id", ondelete="CASCADE"), nullable=False, index=True)
     status = Column(String(20), nullable=False, default=StatusPresenca.PRESENTE.value)
     motivo_justificativa = Column(String(255), nullable=True)
+    eh_reposicao = Column(Boolean, default=False, nullable=False)
+    makeup_id = Column(Integer, ForeignKey("class_makeups.id", ondelete="SET NULL", use_alter=True, name="fk_attendance_makeup"), nullable=True)
     criada_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     lesson = relationship("Lesson", back_populates="frequencias")
@@ -88,7 +91,8 @@ class ClassMakeUp(Base):
 
     aluno = relationship("Aluno")
     turma_destino = relationship("ClassGroup")
-    falta = relationship("Attendance")
+    matricula_origem = relationship("Matricula")
+    falta = relationship("Attendance", foreign_keys=[attendance_falta_id])
 
     def __repr__(self) -> str:
         return f"<ClassMakeUp aluno_id={self.aluno_id} falta={self.data_falta} reposicao={self.data_reposicao}>"

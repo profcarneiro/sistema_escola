@@ -23,6 +23,7 @@ from app.schemas.enrollment import (
 )
 from app.routers.auth import get_current_active_user, require_roles
 from app.services.discount_policy import simular_politica_desconto
+from app.services.cost_centers import get_or_create_course_cost_center, get_general_cost_center_id
 
 router = APIRouter(prefix="/enrollments", tags=["Matrículas e Lista de Espera"])
 
@@ -128,13 +129,19 @@ def sincronizar_faturas_matricula(
     if turma is None:
         turma = db.query(ClassGroup).filter(ClassGroup.id == matricula.turma_id).first()
 
-    curso_nome = None
+    curso_obj = None
     if getattr(matricula, "curso_id", None):
-        if getattr(matricula, "curso", None):
-            curso_nome = matricula.curso.nome
-        else:
-            curso_obj = db.query(Course).filter(Course.id == matricula.curso_id).first()
-            curso_nome = curso_obj.nome if curso_obj else None
+        curso_obj = getattr(matricula, "curso", None) or db.query(Course).filter(Course.id == matricula.curso_id).first()
+    elif turma and turma.curso_id:
+        curso_obj = db.query(Course).filter(Course.id == turma.curso_id).first()
+
+    curso_nome = curso_obj.nome if curso_obj else None
+    curso_id_ref = curso_obj.id if curso_obj else None
+    centro_custo_id_ref = (
+        get_or_create_course_cost_center(db, curso_obj).id
+        if curso_obj
+        else get_general_cost_center_id(db, "SEM_CENTRO")
+    )
 
     turma_nome = turma.nome if turma else f"Turma #{matricula.turma_id}"
     label_servico = curso_nome or turma_nome
@@ -243,6 +250,8 @@ def sincronizar_faturas_matricula(
                     or principal.data_vencimento != data_venc
                     or principal.status != status_esperado
                     or principal.responsavel_id != resp_id
+                    or principal.curso_id != curso_id_ref
+                    or principal.centro_custo_id != centro_custo_id_ref
                 )
                 if alterou:
                     principal.descricao = desc
@@ -252,6 +261,8 @@ def sincronizar_faturas_matricula(
                     principal.data_vencimento = data_venc
                     principal.status = status_esperado
                     principal.responsavel_id = resp_id
+                    principal.curso_id = curso_id_ref
+                    principal.centro_custo_id = centro_custo_id_ref
                     atualizadas += 1
             continue
 
@@ -259,6 +270,8 @@ def sincronizar_faturas_matricula(
             matricula_id=matricula.id,
             aluno_id=matricula.aluno_id,
             responsavel_id=resp_id,
+            curso_id=curso_id_ref,
+            centro_custo_id=centro_custo_id_ref,
             descricao=desc,
             competencia=competencia,
             valor_nominal=valor_nominal,

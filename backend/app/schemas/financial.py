@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
-from app.models.financial import FormaPagamento, StatusTitulo
+from app.models.financial import FormaPagamento, StatusTitulo, SituacaoDespesa, TipoCentroCusto
 
 
 FORMAS_PAGAMENTO_VALIDAS = [f.value for f in FormaPagamento]
@@ -67,24 +67,121 @@ class InvoiceResponse(InvoiceBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CostCenterBase(BaseModel):
+    nome: str = Field(..., min_length=2, max_length=120)
+    tipo: TipoCentroCusto = TipoCentroCusto.GERAL
+    curso_id: Optional[int] = None
+
+
+class CostCenterCreate(CostCenterBase):
+    codigo: Optional[str] = Field(None, max_length=60)
+
+
+class CostCenterResponse(CostCenterBase):
+    id: int
+    codigo: str
+    ativo: bool
+    criado_em: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CostCenterMonthMetrics(BaseModel):
+    competencia: str
+    receita_prevista: float
+    custo_previsto: float
+    resultado_previsto: float
+    receita_realizada: float
+    custo_realizado: float
+    resultado_realizado: float
+
+
+class CostCenterReportItem(BaseModel):
+    centro_custo_id: int
+    nome: str
+    tipo: str
+    curso_id: Optional[int] = None
+    receita_prevista_total: float
+    custo_previsto_total: float
+    resultado_previsto_total: float
+    percentual_receita_prevista: float
+    receita_realizada_total: float
+    custo_realizado_total: float
+    resultado_realizado_total: float
+    percentual_receita_realizada: float
+    meses: List[CostCenterMonthMetrics] = []
+
+
+class CostCenterReportResponse(BaseModel):
+    total_receita_prevista: float
+    total_custo_previsto: float
+    total_resultado_previsto: float
+    total_receita_realizada: float
+    total_custo_realizado: float
+    total_resultado_realizado: float
+    centros: List[CostCenterReportItem]
+
+
 class ExpenseBase(BaseModel):
-    categoria: str = Field(..., min_length=2, max_length=100, description="Categoria: Materiais Artísticos, Aluguel, etc.")
+    categoria: str = Field(..., min_length=2, max_length=100, description="Categoria: Aluguel, Água, Luz, Material, etc.")
     descricao: str = Field(..., min_length=2, max_length=255, description="Descrição do gasto")
-    valor: float = Field(..., gt=0.0, description="Valor da despesa em R$")
+    valor: Optional[float] = Field(None, gt=0.0, description="Valor da despesa em R$")
+    valor_previsto: Optional[float] = Field(None, gt=0.0, description="Valor previsto da despesa em R$")
+    valor_pago: Optional[float] = Field(None, ge=0.0, description="Valor efetivamente pago em R$")
     data_competencia: date = Field(..., description="Data de competência da despesa")
+    data_vencimento: Optional[date] = Field(None, description="Data de vencimento")
     data_pagamento: Optional[date] = Field(None, description="Data em que o pagamento foi realizado")
-    pago: bool = Field(True, description="Indica se a despesa já foi quitada")
+    pago: Optional[bool] = Field(None, description="Indica se a despesa já foi quitada")
+    situacao: Optional[SituacaoDespesa] = Field(None, description="EM_ABERTO ou PAGO")
     forma_pagamento: FormaPagamento = Field(FormaPagamento.PIX, description="Forma de pagamento utilizada")
+    centro_custo_id: Optional[int] = Field(None, description="Centro de custo vinculado")
     comprovante: Optional[str] = Field(None, description="Número do recibo ou nota fiscal")
     observacoes: Optional[str] = None
 
 
 class ExpenseCreate(ExpenseBase):
-    pass
+    recorrente: bool = False
+    recorrencia_meses: int = Field(1, ge=1, le=36)
+    total_parcelas: int = Field(1, ge=1, le=36)
 
 
-class ExpenseResponse(ExpenseBase):
+class ExpenseUpdate(BaseModel):
+    categoria: Optional[str] = Field(None, min_length=2, max_length=100)
+    descricao: Optional[str] = Field(None, min_length=2, max_length=255)
+    valor_previsto: Optional[float] = Field(None, gt=0.0)
+    valor_pago: Optional[float] = Field(None, ge=0.0)
+    data_competencia: Optional[date] = None
+    data_vencimento: Optional[date] = None
+    data_pagamento: Optional[date] = None
+    pago: Optional[bool] = None
+    situacao: Optional[SituacaoDespesa] = None
+    forma_pagamento: Optional[FormaPagamento] = None
+    centro_custo_id: Optional[int] = None
+    comprovante: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
+class ExpenseResponse(BaseModel):
     id: int
+    categoria: str
+    descricao: str
+    valor: float
+    valor_previsto: Optional[float] = None
+    valor_pago: float = 0.0
+    data_competencia: date
+    data_vencimento: Optional[date] = None
+    data_pagamento: Optional[date] = None
+    pago: bool
+    situacao: str = "EM_ABERTO"
+    forma_pagamento: FormaPagamento
+    centro_custo_id: Optional[int] = None
+    centro_custo_nome: Optional[str] = None
+    recorrente: bool = False
+    parcela_atual: Optional[int] = None
+    total_parcelas: Optional[int] = None
+    parcelas_criadas: int = 1
+    comprovante: Optional[str] = None
+    observacoes: Optional[str] = None
     criado_em: datetime
 
     model_config = ConfigDict(from_attributes=True)

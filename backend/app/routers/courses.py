@@ -10,6 +10,7 @@ from app.models.class_group import ClassGroup
 from app.models.user import User, UserRole
 from app.schemas.course import CourseCreate, CourseUpdate, CourseResponse
 from app.routers.auth import get_current_active_user, require_roles
+from app.services.cost_centers import get_or_create_course_cost_center
 
 router = APIRouter(prefix="/courses", tags=["Cursos e Modalidades"])
 
@@ -57,6 +58,8 @@ def create_course(
         ativo=True
     )
     db.add(novo_curso)
+    db.flush()
+    get_or_create_course_cost_center(db, novo_curso)
     db.commit()
     db.refresh(novo_curso)
 
@@ -117,6 +120,7 @@ def update_course(
     if course_update.ativo is not None:
         course.ativo = course_update.ativo
 
+    get_or_create_course_cost_center(db, course)
     db.commit()
     db.refresh(course)
 

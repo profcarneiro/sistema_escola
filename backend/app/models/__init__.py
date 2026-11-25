@@ -26,11 +26,26 @@ from app.models.attendance import (
     ConceitoAvaliacao,
 )
 from app.models.financial import (
+    CostCenter,
     Invoice,
     Payment,
     Expense,
     FormaPagamento,
     StatusTitulo,
+    SituacaoDespesa,
+    TipoCentroCusto,
+)
+from app.models.operations import (
+    TeacherPaymentRule,
+    TeacherClosing,
+    AttendanceChangeLog,
+    CommercialConfig,
+    CommercialPayout,
+    WorkshopSession,
+    WorkshopParticipant,
+    ModalidadePagamentoProfessor,
+    ModoPagamentoPercentual,
+    StatusFechamento,
 )
 
 __all__ = [
@@ -66,11 +81,24 @@ __all__ = [
     "StatusPresenca",
     "StatusReposicao",
     "ConceitoAvaliacao",
+    "CostCenter",
     "Invoice",
     "Payment",
     "Expense",
     "FormaPagamento",
     "StatusTitulo",
+    "SituacaoDespesa",
+    "TipoCentroCusto",
+    "TeacherPaymentRule",
+    "TeacherClosing",
+    "AttendanceChangeLog",
+    "CommercialConfig",
+    "CommercialPayout",
+    "WorkshopSession",
+    "WorkshopParticipant",
+    "ModalidadePagamentoProfessor",
+    "ModoPagamentoPercentual",
+    "StatusFechamento",
 ]
 
 

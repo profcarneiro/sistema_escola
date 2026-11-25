@@ -11,7 +11,9 @@ from app.models.user import User, UserRole
 from app.models.room import Room
 from app.models.course import Course
 from app.models.class_group import ClassGroup, FaixaEtaria
+from app.models.operations import CommercialConfig
 from app.services.discount_policy import ensure_default_discount_policies
+from app.services.cost_centers import ensure_default_cost_centers, get_general_cost_center_id
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -198,6 +200,62 @@ def aplicar_migracoes(target_engine) -> None:
                     logger.info("Migrando tabela users: adicionando professor_id")
                     conn.execute(text("ALTER TABLE users ADD COLUMN professor_id INTEGER;"))
 
+        if "expenses" in tables:
+            cols = [c["name"] for c in inspector.get_columns("expenses")]
+            novas_cols_expenses = [
+                ("valor_previsto", "FLOAT"),
+                ("valor_pago", "FLOAT DEFAULT 0.0"),
+                ("data_vencimento", "DATE"),
+                ("situacao", "VARCHAR(20) DEFAULT 'EM_ABERTO'"),
+                ("centro_custo_id", "INTEGER"),
+                ("recorrente", "BOOLEAN DEFAULT FALSE"),
+                ("parcela_atual", "INTEGER"),
+                ("total_parcelas", "INTEGER"),
+                ("grupo_lancamento", "VARCHAR(60)"),
+                ("origem_tipo", "VARCHAR(40)"),
+                ("origem_id", "INTEGER"),
+            ]
+            with target_engine.begin() as conn:
+                for col_name, col_def in novas_cols_expenses:
+                    if col_name not in cols:
+                        logger.info(f"Migrando tabela expenses: adicionando {col_name}")
+                        conn.execute(text(f"ALTER TABLE expenses ADD COLUMN {col_name} {col_def};"))
+                conn.execute(text("UPDATE expenses SET valor_previsto = valor WHERE valor_previsto IS NULL;"))
+                conn.execute(text("UPDATE expenses SET valor_pago = CASE WHEN pago THEN valor ELSE 0.0 END WHERE valor_pago IS NULL OR (pago AND valor_pago = 0);"))
+                conn.execute(text("UPDATE expenses SET situacao = CASE WHEN pago THEN 'PAGO' ELSE 'EM_ABERTO' END WHERE situacao IS NULL OR situacao = '';"))
+                conn.execute(text("UPDATE expenses SET data_vencimento = data_competencia WHERE data_vencimento IS NULL;"))
+
+        if "invoices" in tables:
+            cols = [c["name"] for c in inspector.get_columns("invoices")]
+            novas_cols_invoices = [
+                ("curso_id", "INTEGER"),
+                ("centro_custo_id", "INTEGER"),
+            ]
+            with target_engine.begin() as conn:
+                for col_name, col_def in novas_cols_invoices:
+                    if col_name not in cols:
+                        logger.info(f"Migrando tabela invoices: adicionando {col_name}")
+                        conn.execute(text(f"ALTER TABLE invoices ADD COLUMN {col_name} {col_def};"))
+
+        if "lessons" in tables:
+            cols = [c["name"] for c in inspector.get_columns("lessons")]
+            with target_engine.begin() as conn:
+                if "cancelada_professor" not in cols:
+                    logger.info("Migrando tabela lessons: adicionando cancelada_professor")
+                    conn.execute(text("ALTER TABLE lessons ADD COLUMN cancelada_professor BOOLEAN DEFAULT FALSE;"))
+
+        if "attendances" in tables:
+            cols = [c["name"] for c in inspector.get_columns("attendances")]
+            novas_cols_att = [
+                ("eh_reposicao", "BOOLEAN DEFAULT FALSE"),
+                ("makeup_id", "INTEGER"),
+            ]
+            with target_engine.begin() as conn:
+                for col_name, col_def in novas_cols_att:
+                    if col_name not in cols:
+                        logger.info(f"Migrando tabela attendances: adicionando {col_name}")
+                        conn.execute(text(f"ALTER TABLE attendances ADD COLUMN {col_name} {col_def};"))
+
         if target_engine.dialect.name == "sqlite":
             _migrar_sqlite_sem_limite_9(target_engine)
         elif target_engine.dialect.name == "postgresql":
@@ -242,6 +300,13 @@ def aplicar_migracoes(target_engine) -> None:
                 conn.execute(text(
                     "UPDATE matriculas SET curso_id = ("
                     "  SELECT cg.curso_id FROM class_groups cg WHERE cg.id = matriculas.turma_id"
+                    ") WHERE curso_id IS NULL"
+                ))
+        if "invoices" in tables and "matriculas" in tables:
+            with target_engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE invoices SET curso_id = ("
+                    "  SELECT m.curso_id FROM matriculas m WHERE m.id = invoices.matricula_id"
                     ") WHERE curso_id IS NULL"
                 ))
     except Exception as e:
@@ -410,6 +475,32 @@ def init_db(db: Session) -> None:
 
     # --- Políticas padrão de Planos e Descontos ---
     ensure_default_discount_policies(db)
+
+    # --- Centros de Custo Gerais + por Curso ---
+    ensure_default_cost_centers(db)
+    sem_centro_id = get_general_cost_center_id(db, "SEM_CENTRO")
+    if sem_centro_id:
+        db.execute(text(
+            "UPDATE invoices SET centro_custo_id = COALESCE(("
+            "  SELECT cc.id FROM cost_centers cc WHERE cc.curso_id = invoices.curso_id"
+            "), :sem_centro) WHERE centro_custo_id IS NULL"
+        ), {"sem_centro": sem_centro_id})
+        db.execute(text(
+            "UPDATE expenses SET centro_custo_id = :sem_centro WHERE centro_custo_id IS NULL"
+        ), {"sem_centro": sem_centro_id})
+        db.commit()
+
+    # --- Configuração padrão do Comercial ---
+    if not db.query(CommercialConfig).filter(CommercialConfig.id == 1).first():
+        db.add(CommercialConfig(
+            id=1,
+            nome_responsavel="Comercial HB",
+            valor_fixo_mensal=0.0,
+            comissao_por_matricula=0.0,
+            percentual_sobre_vendas=0.0,
+            ativo=True,
+        ))
+        db.commit()
 
     # --- Correções de dados P0 (idempotente) ---
     aplicar_correcoes_dados_p0(db)

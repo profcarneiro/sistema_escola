@@ -45,10 +45,20 @@ class LessonBase(BaseModel):
     conteudo_programatico: Optional[str] = Field(None, description="Técnicas, exercícios e conteúdos trabalhados")
     materiais_utilizados: Optional[str] = Field(None, max_length=255, description="Pincéis, tintas, papéis, etc.")
     observacoes: Optional[str] = Field(None, description="Observações pedagógicas gerais da aula")
+    cancelada_professor: bool = Field(False, description="Indica se a aula foi cancelada pelo professor (sem pagamento)")
 
 
 class LessonCreate(LessonBase):
     pass
+
+
+class LessonUpdate(BaseModel):
+    tema_aula: Optional[str] = Field(None, min_length=2, max_length=200)
+    conteudo_programatico: Optional[str] = None
+    materiais_utilizados: Optional[str] = Field(None, max_length=255)
+    observacoes: Optional[str] = None
+    cancelada_professor: Optional[bool] = None
+    motivo_alteracao: Optional[str] = None
 
 
 class LessonResponse(LessonBase):
@@ -67,10 +77,13 @@ class AttendanceItem(BaseModel):
     matricula_id: int
     status: StatusPresenca = StatusPresenca.PRESENTE
     motivo_justificativa: Optional[str] = Field(None, max_length=255)
+    eh_reposicao: bool = False
+    makeup_id: Optional[int] = None
 
 
 class AttendanceBatchCreate(BaseModel):
     frequencias: List[AttendanceItem] = Field(..., min_length=1)
+    motivo_alteracao: Optional[str] = Field(None, description="Motivo obrigatório caso o mês já esteja fechado")
 
 
 class AttendanceResponse(BaseModel):
@@ -80,6 +93,8 @@ class AttendanceResponse(BaseModel):
     matricula_id: int
     status: StatusPresenca
     motivo_justificativa: Optional[str] = None
+    eh_reposicao: bool = False
+    makeup_id: Optional[int] = None
     aluno_nome: Optional[str] = None
     criada_em: datetime
 
@@ -193,3 +208,26 @@ class StudentAttendanceReport(BaseModel):
     taxa_presenca_percentual: float
     registros: list[AttendanceRecordItem] = []
     historico: list[AttendanceRecordItem] = []
+
+
+class MissingCallAlertItem(BaseModel):
+    turma_id: int
+    turma_nome: str
+    professor_nome: Optional[str] = None
+    dia_semana: str
+    horario: str
+    data_referencia: date
+    motivo: str
+    lesson_id: Optional[int] = None
+
+
+class MonthlyStudentAttendanceItem(BaseModel):
+    aluno_id: int
+    aluno_nome: str
+    turma_id: int
+    turma_nome: str
+    presencas: int
+    faltas: int
+    justificadas: int
+    reposicoes: int
+    taxa_presenca_percentual: float

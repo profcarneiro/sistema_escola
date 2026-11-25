@@ -155,14 +155,22 @@ export const api = {
   // Frequência & Diário
   getLessons: (turmaId) => request(`/attendance/lessons?turma_id=${turmaId || ''}`),
   createLesson: (data) => request('/attendance/lessons', { method: 'POST', body: JSON.stringify(data) }),
-  recordAttendance: (lessonId, frequencias) => request(`/attendance/lessons/${lessonId}/batch`, {
+  recordAttendance: (lessonId, frequencias, motivoAlteracao = null) => request(`/attendance/lessons/${lessonId}/batch`, {
     method: 'POST',
-    body: JSON.stringify({ frequencias })
+    body: JSON.stringify({ frequencias, motivo_alteracao: motivoAlteracao })
+  }),
+  updateLesson: (lessonId, data) => request(`/attendance/lessons/${lessonId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
   }),
   getMakeups: () => request('/attendance/makeups'),
   createMakeup: (data) => request('/attendance/makeups', { method: 'POST', body: JSON.stringify(data) }),
   getAttendanceClassesSummary: () => request('/attendance/reports/classes-summary'),
   getAttendanceStudentHistory: (alunoId) => request(`/attendance/reports/student-history?aluno_id=${alunoId}`),
+  getMissingCallAlerts: (competencia = '') =>
+    request(`/attendance/alerts/missing-calls${competencia ? `?competencia=${competencia}` : ''}`),
+  getMonthlyStudentsAttendance: (competencia, turmaId = '') =>
+    request(`/attendance/reports/monthly-students?competencia=${competencia}${turmaId ? `&turma_id=${turmaId}` : ''}`),
 
   // Gestão de Usuários e Acessos
   getUsers: () => request('/users/'),
@@ -179,6 +187,59 @@ export const api = {
   getCashFlow: (inicio, fim) => request(`/financial/cash-flow?data_inicio=${inicio}&data_fim=${fim}`),
   getDRE: (inicio, fim, alunoId = null) => request(`/financial/dre?competencia_inicio=${inicio}&competencia_fim=${fim}${alunoId ? `&aluno_id=${alunoId}` : ''}`),
   getDiscountsReport: (params = '') => request(`/financial/discounts-report${params ? `?${params}` : ''}`),
+
+  // Despesas & Centros de Custo
+  getExpenses: (params = '') => request(`/financial/expenses${params ? `?${params}` : ''}`),
+  createExpense: (data) => request('/financial/expenses', { method: 'POST', body: JSON.stringify(data) }),
+  updateExpense: (id, data) => request(`/financial/expenses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteExpense: (id) => request(`/financial/expenses/${id}`, { method: 'DELETE' }),
+  exportExpensesCsv: (params = '') =>
+    downloadBlob(`/financial/expenses/export-csv${params ? `?${params}` : ''}`, 'despesas_escola_hb.csv'),
+  getCostCenters: () => request('/financial/cost-centers'),
+  createCostCenter: (data) => request('/financial/cost-centers', { method: 'POST', body: JSON.stringify(data) }),
+  getCostCentersReport: (params = '') => request(`/financial/cost-centers/report${params ? `?${params}` : ''}`),
+
+  // Operacional: Pagamento de Professores, Comercial & Ateliê Parceria
+  getTeacherRules: (professorId = '') =>
+    request(`/operations/teachers/rules${professorId ? `?professor_id=${professorId}` : ''}`),
+  upsertTeacherRule: (data) => request('/operations/teachers/rules', { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTeacherRule: (id) => request(`/operations/teachers/rules/${id}`, { method: 'DELETE' }),
+  generateTeacherClosings: (data) =>
+    request('/operations/teachers/closings/generate', { method: 'POST', body: JSON.stringify(data) }),
+  getTeacherClosings: (competencia = '', professorId = '') => {
+    const qs = new URLSearchParams();
+    if (competencia) qs.set('competencia', competencia);
+    if (professorId) qs.set('professor_id', professorId);
+    const s = qs.toString();
+    return request(`/operations/teachers/closings${s ? `?${s}` : ''}`);
+  },
+  payTeacherClosing: (id, data) =>
+    request(`/operations/teachers/closings/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
+  reopenTeacherClosing: (id) =>
+    request(`/operations/teachers/closings/${id}/reopen`, { method: 'POST' }),
+  getAttendanceChangeLogs: (competencia = '') =>
+    request(`/operations/teachers/change-logs${competencia ? `?competencia=${competencia}` : ''}`),
+
+  getCommercialConfig: () => request('/operations/commercial/config'),
+  updateCommercialConfig: (data) => request('/operations/commercial/config', { method: 'PUT', body: JSON.stringify(data) }),
+  generateCommercialClosing: (competencia) =>
+    request(`/operations/commercial/closings/generate?competencia=${competencia}`, { method: 'POST' }),
+  getCommercialClosings: () => request('/operations/commercial/closings'),
+  payCommercialClosing: (id, data) =>
+    request(`/operations/commercial/closings/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
+
+  getWorkshops: (competencia = '') =>
+    request(`/operations/workshops${competencia ? `?competencia=${competencia}` : ''}`),
+  createWorkshop: (data) => request('/operations/workshops', { method: 'POST', body: JSON.stringify(data) }),
+  deleteWorkshop: (id) => request(`/operations/workshops/${id}`, { method: 'DELETE' }),
+  addWorkshopParticipant: (workshopId, data) =>
+    request(`/operations/workshops/${workshopId}/participants`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteWorkshopParticipant: (participantId) =>
+    request(`/operations/workshops/participants/${participantId}`, { method: 'DELETE' }),
+  payWorkshopTransfer: (workshopId, data) =>
+    request(`/operations/workshops/${workshopId}/pay-transfer`, { method: 'POST', body: JSON.stringify(data) }),
+  getWorkshopsSummary: (competencia) =>
+    request(`/operations/workshops/summary?competencia=${competencia}`),
 
   // Planos e Descontos
   getDiscountPolicies: () => request('/discount-policies/'),
