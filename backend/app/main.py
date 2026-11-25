@@ -24,6 +24,7 @@ from app.routers import (
     communication_router,
     reports_router,
     backup_router,
+    discount_policies_router,
 )
 
 
@@ -86,6 +87,7 @@ app.include_router(financial_router, prefix=settings.API_V1_STR)
 app.include_router(communication_router, prefix=settings.API_V1_STR)
 app.include_router(reports_router, prefix=settings.API_V1_STR)
 app.include_router(backup_router, prefix=settings.API_V1_STR)
+app.include_router(discount_policies_router, prefix=settings.API_V1_STR)
 
 
 

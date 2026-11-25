@@ -11,6 +11,7 @@ from app.models.user import User, UserRole
 from app.models.room import Room
 from app.models.course import Course
 from app.models.class_group import ClassGroup, FaixaEtaria
+from app.services.discount_policy import ensure_default_discount_policies
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -148,16 +149,47 @@ def aplicar_migracoes(target_engine) -> None:
 
         if "matriculas" in tables:
             cols = [c["name"] for c in inspector.get_columns("matriculas")]
+            novas_cols_matriculas = [
+                ("dia_vencimento", "INTEGER DEFAULT 10"),
+                ("quantidade_parcelas", "INTEGER DEFAULT 12"),
+                ("curso_id", "INTEGER"),
+                ("data_saida", "DATE"),
+                ("duracao_contrato_meses", "INTEGER DEFAULT 12"),
+                ("valor_total_contrato", "FLOAT"),
+                ("condicao_pagamento", "VARCHAR(20) DEFAULT 'MENSAL'"),
+                ("plano_id", "INTEGER"),
+                ("plano_nome", "VARCHAR(100)"),
+                ("desconto_valor_fixo", "FLOAT DEFAULT 0.0"),
+                ("desconto_plano_percentual", "FLOAT DEFAULT 0.0"),
+                ("desconto_adicional_percentual", "FLOAT DEFAULT 0.0"),
+                ("descontos_aplicados_json", "TEXT"),
+                ("desconto_editado_manualmente", "BOOLEAN DEFAULT FALSE"),
+                ("desconto_alterado_por_id", "INTEGER"),
+                ("desconto_alterado_por_nome", "VARCHAR(150)"),
+                ("desconto_motivo_alteracao", "TEXT"),
+                ("desconto_alterado_em", "TIMESTAMP"),
+                ("is_cortesia", "BOOLEAN DEFAULT FALSE"),
+                ("tipo_cortesia", "VARCHAR(40)"),
+            ]
             with target_engine.begin() as conn:
-                if "dia_vencimento" not in cols:
-                    logger.info("Migrando tabela matriculas: adicionando dia_vencimento")
-                    conn.execute(text("ALTER TABLE matriculas ADD COLUMN dia_vencimento INTEGER DEFAULT 10;"))
-                if "quantidade_parcelas" not in cols:
-                    logger.info("Migrando tabela matriculas: adicionando quantidade_parcelas")
-                    conn.execute(text("ALTER TABLE matriculas ADD COLUMN quantidade_parcelas INTEGER DEFAULT 12;"))
-                if "curso_id" not in cols:
-                    logger.info("Migrando tabela matriculas: adicionando curso_id")
-                    conn.execute(text("ALTER TABLE matriculas ADD COLUMN curso_id INTEGER;"))
+                for col_name, col_def in novas_cols_matriculas:
+                    if col_name not in cols:
+                        logger.info(f"Migrando tabela matriculas: adicionando {col_name}")
+                        conn.execute(text(f"ALTER TABLE matriculas ADD COLUMN {col_name} {col_def};"))
+
+        if "alunos" in tables:
+            cols = [c["name"] for c in inspector.get_columns("alunos")]
+            novas_cols_alunos = [
+                ("observacoes", "TEXT"),
+                ("contatos_emergencia", "TEXT"),
+                ("tipo_liberacao", "VARCHAR(30) DEFAULT 'ACOMPANHANTE'"),
+                ("acompanhantes_autorizados", "TEXT"),
+            ]
+            with target_engine.begin() as conn:
+                for col_name, col_def in novas_cols_alunos:
+                    if col_name not in cols:
+                        logger.info(f"Migrando tabela alunos: adicionando {col_name}")
+                        conn.execute(text(f"ALTER TABLE alunos ADD COLUMN {col_name} {col_def};"))
 
         if "users" in tables:
             cols = [c["name"] for c in inspector.get_columns("users")]
@@ -375,6 +407,9 @@ def init_db(db: Session) -> None:
             db.add(novo_curso)
             logger.info(f"Curso criado: {curso_data['nome']}")
     db.commit()
+
+    # --- Políticas padrão de Planos e Descontos ---
+    ensure_default_discount_policies(db)
 
     # --- Correções de dados P0 (idempotente) ---
     aplicar_correcoes_dados_p0(db)

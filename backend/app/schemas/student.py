@@ -1,7 +1,8 @@
 from datetime import date, datetime
 from typing import Optional
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 
+from app.models.student import TipoLiberacao
 from app.schemas.guardian import ResponsavelCreate, ResponsavelResponse
 
 
@@ -22,6 +23,10 @@ class AlunoBase(BaseModel):
     alergias: Optional[str] = Field(None, description="Alergias conhecidas do aluno")
     medicacoes: Optional[str] = Field(None, description="Medicações em uso")
     observacoes_saude: Optional[str] = Field(None, description="Observações gerais de saúde")
+    observacoes: Optional[str] = Field(None, description="Observações gerais do aluno")
+    contatos_emergencia: Optional[str] = Field(None, description="Contatos de emergência (nome, parentesco e telefone)")
+    tipo_liberacao: TipoLiberacao = Field(TipoLiberacao.ACOMPANHANTE, description="Liberação do aluno: SOZINHO ou ACOMPANHANTE")
+    acompanhantes_autorizados: Optional[str] = Field(None, description="Nomes dos acompanhantes autorizados a buscar o aluno")
     autorizacao_imagem: bool = Field(False, description="Autorização de uso de imagem")
 
 
@@ -55,6 +60,10 @@ class AlunoUpdate(BaseModel):
     alergias: Optional[str] = None
     medicacoes: Optional[str] = None
     observacoes_saude: Optional[str] = None
+    observacoes: Optional[str] = None
+    contatos_emergencia: Optional[str] = None
+    tipo_liberacao: Optional[TipoLiberacao] = None
+    acompanhantes_autorizados: Optional[str] = None
     autorizacao_imagem: Optional[bool] = None
     ativo: Optional[bool] = None
 

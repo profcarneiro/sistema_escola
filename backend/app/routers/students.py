@@ -91,6 +91,10 @@ def create_student(
         alergias=aluno_in.alergias,
         medicacoes=aluno_in.medicacoes,
         observacoes_saude=aluno_in.observacoes_saude,
+        observacoes=aluno_in.observacoes.strip() if aluno_in.observacoes else None,
+        contatos_emergencia=aluno_in.contatos_emergencia.strip() if aluno_in.contatos_emergencia else None,
+        tipo_liberacao=aluno_in.tipo_liberacao.value if aluno_in.tipo_liberacao else "ACOMPANHANTE",
+        acompanhantes_autorizados=aluno_in.acompanhantes_autorizados.strip() if aluno_in.acompanhantes_autorizados else None,
         autorizacao_imagem=aluno_in.autorizacao_imagem,
         autorizacao_imagem_data=datetime.now(timezone.utc) if aluno_in.autorizacao_imagem else None,
         ativo=True
@@ -177,6 +181,16 @@ def update_student(
         aluno.medicacoes = aluno_update.medicacoes
     if aluno_update.observacoes_saude is not None:
         aluno.observacoes_saude = aluno_update.observacoes_saude
+    if aluno_update.observacoes is not None:
+        aluno.observacoes = aluno_update.observacoes.strip() if aluno_update.observacoes else None
+    if aluno_update.contatos_emergencia is not None:
+        aluno.contatos_emergencia = aluno_update.contatos_emergencia.strip() if aluno_update.contatos_emergencia else None
+    if aluno_update.tipo_liberacao is not None:
+        aluno.tipo_liberacao = aluno_update.tipo_liberacao.value
+    if aluno_update.acompanhantes_autorizados is not None:
+        aluno.acompanhantes_autorizados = (
+            aluno_update.acompanhantes_autorizados.strip() if aluno_update.acompanhantes_autorizados else None
+        )
     if aluno_update.autorizacao_imagem is not None:
         aluno.autorizacao_imagem = aluno_update.autorizacao_imagem
         if aluno_update.autorizacao_imagem:

@@ -11,6 +11,7 @@ class FormaPagamento(str, enum.Enum):
     CARTAO = "CARTAO"
     BOLETO = "BOLETO"
     DINHEIRO = "DINHEIRO"
+    TRANSFERENCIA = "TRANSFERENCIA"
 
 
 class StatusTitulo(str, enum.Enum):

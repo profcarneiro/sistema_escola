@@ -69,6 +69,37 @@ export default function App() {
   const [editingRoom, setEditingRoom] = useState(null);
   const [enrollSelectedTurmaId, setEnrollSelectedTurmaId] = useState('');
   const [enrollSelectedCursoId, setEnrollSelectedCursoId] = useState('');
+  const [enrollValorMensalidade, setEnrollValorMensalidade] = useState('280.00');
+  const [enrollDuracaoMeses, setEnrollDuracaoMeses] = useState(12);
+  const [enrollCondicaoPagamento, setEnrollCondicaoPagamento] = useState('MENSAL');
+  const [enrollQuantidadeParcelas, setEnrollQuantidadeParcelas] = useState(12);
+  const [enrollPlanoId, setEnrollPlanoId] = useState('');
+  const [enrollDescontosIds, setEnrollDescontosIds] = useState([]);
+  const [enrollDescontoPct, setEnrollDescontoPct] = useState('0');
+  const [enrollDescontoFixo, setEnrollDescontoFixo] = useState('0');
+  const [enrollAutoPct, setEnrollAutoPct] = useState(0);
+  const [enrollDescontoManual, setEnrollDescontoManual] = useState(false);
+  const [enrollDescontoMotivo, setEnrollDescontoMotivo] = useState('');
+  const [enrollIsCortesia, setEnrollIsCortesia] = useState(false);
+  const [enrollTipoCortesia, setEnrollTipoCortesia] = useState('CONTRATO_QUITADO');
+  const [enrollIsExperimental, setEnrollIsExperimental] = useState(false);
+
+  // Planos e Descontos
+  const [discountPolicies, setDiscountPolicies] = useState({
+    configuracoes: { teto_maximo_desconto_percentual: 30 },
+    planos: [],
+    regras_cursos: [],
+  });
+  const [tetoDescontoInput, setTetoDescontoInput] = useState('30');
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [discountsReport, setDiscountsReport] = useState(null);
+  const [ruleForm, setRuleForm] = useState({
+    curso_id: '',
+    plano_id: '',
+    permitido: true,
+    percentual_override: '',
+  });
   const [showPayModal, setShowPayModal] = useState(null);
   const [payMethod, setPayMethod] = useState('PIX');
   const [payValue, setPayValue] = useState('');
@@ -157,7 +188,7 @@ export default function App() {
   const loadDashboardData = async () => {
     if (!token) return;
     try {
-      const [dash, s, r, c, t, cls, enr, inv, def, bkp] = await Promise.all([
+      const [dash, s, r, c, t, cls, enr, inv, def, bkp, pol] = await Promise.all([
         api.getDashboard().catch(() => null),
         api.getStudents().catch(() => []),
         api.getRooms().catch(() => []),
@@ -168,6 +199,7 @@ export default function App() {
         api.getInvoices().catch(() => []),
         api.getDefaulters().catch(() => []),
         api.getBackups().catch(() => []),
+        api.getDiscountPolicies().catch(() => null),
       ]);
       setDashboard(dash);
       setStudents(s);
@@ -179,6 +211,14 @@ export default function App() {
       setInvoices(inv);
       setDefaulters(def);
       setBackups(bkp);
+      if (pol) {
+        setDiscountPolicies(pol);
+        setTetoDescontoInput(String(pol.configuracoes?.teto_maximo_desconto_percentual ?? 30));
+      }
+
+      if (activeTab === 'financial' || activeTab === 'plans') {
+        api.getDiscountsReport().then(rep => setDiscountsReport(rep)).catch(() => setDiscountsReport(null));
+      }
 
       if (isAdminOrCoord) {
         api.getUsers().then(u => setUsers(u)).catch(() => setUsers([]));
@@ -382,6 +422,10 @@ export default function App() {
       email: formData.get('email') || null,
       endereco: formData.get('endereco') || null,
       alergias: formData.get('alergias') || null,
+      observacoes: formData.get('observacoes') || null,
+      contatos_emergencia: formData.get('contatos_emergencia') || null,
+      tipo_liberacao: formData.get('tipo_liberacao') || 'ACOMPANHANTE',
+      acompanhantes_autorizados: formData.get('acompanhantes_autorizados') || null,
       autorizacao_imagem: formData.get('autorizacao_imagem') === 'on',
       responsavel: isMenor ? {
         nome: formData.get('resp_nome'),
@@ -402,6 +446,10 @@ export default function App() {
           email: payload.email,
           endereco: payload.endereco,
           alergias: payload.alergias,
+          observacoes: payload.observacoes,
+          contatos_emergencia: payload.contatos_emergencia,
+          tipo_liberacao: payload.tipo_liberacao,
+          acompanhantes_autorizados: payload.acompanhantes_autorizados,
           autorizacao_imagem: payload.autorizacao_imagem,
         });
         if (payload.responsavel && editingStudent.responsavel) {
@@ -542,24 +590,111 @@ export default function App() {
   };
 
   // 4. Matricular Aluno em Turma/Curso
+  const computeAutoPolicyPct = (cursoIdVal, planoIdVal, descontosIdsVal) => {
+    const planosList = discountPolicies?.planos || [];
+    const regrasList = discountPolicies?.regras_cursos || [];
+    const teto = Number(discountPolicies?.configuracoes?.teto_maximo_desconto_percentual ?? 30);
+    const cid = cursoIdVal ? parseInt(cursoIdVal, 10) : null;
+
+    const getEfetivo = (pid) => {
+      const p = planosList.find(pl => pl.id === pid);
+      if (!p || !p.ativo) return 0;
+      if (cid) {
+        const reg = regrasList.find(r => r.curso_id === cid && r.plano_id === pid);
+        if (reg) {
+          if (!reg.permitido) return 0;
+          if (reg.percentual_override != null) return Number(reg.percentual_override);
+        }
+      }
+      return Number(p.percentual_desconto || 0);
+    };
+
+    let soma = 0;
+    if (planoIdVal) {
+      soma += getEfetivo(parseInt(planoIdVal, 10));
+    }
+    (descontosIdsVal || []).forEach(did => {
+      if (String(did) !== String(planoIdVal)) {
+        soma += getEfetivo(parseInt(did, 10));
+      }
+    });
+    return Number(Math.min(teto, soma).toFixed(2));
+  };
+
+  const resetEnrollmentForm = () => {
+    setEnrollSelectedTurmaId('');
+    setEnrollSelectedCursoId('');
+    setEnrollValorMensalidade('280.00');
+    setEnrollDuracaoMeses(12);
+    setEnrollCondicaoPagamento('MENSAL');
+    setEnrollQuantidadeParcelas(12);
+    const mensalPlan = (discountPolicies?.planos || []).find(p => p.codigo === 'MENSAL' && p.ativo);
+    setEnrollPlanoId(mensalPlan ? String(mensalPlan.id) : '');
+    setEnrollDescontosIds([]);
+    const pctInit = mensalPlan ? computeAutoPolicyPct(null, mensalPlan.id, []) : 0;
+    setEnrollAutoPct(pctInit);
+    setEnrollDescontoPct(String(pctInit));
+    setEnrollDescontoFixo('0');
+    setEnrollDescontoManual(false);
+    setEnrollDescontoMotivo('');
+    setEnrollIsCortesia(false);
+    setEnrollTipoCortesia('CONTRATO_QUITADO');
+    setEnrollIsExperimental(false);
+  };
+
+  const applyEnrollmentPolicy = (cursoIdVal, planoIdVal, descontosIdsVal, forceSyncManual = false) => {
+    const pct = computeAutoPolicyPct(cursoIdVal, planoIdVal, descontosIdsVal);
+    setEnrollAutoPct(pct);
+    if (forceSyncManual || !enrollDescontoManual) {
+      setEnrollDescontoPct(String(pct));
+      if (forceSyncManual && Number(enrollDescontoFixo || 0) === 0) {
+        setEnrollDescontoManual(false);
+      }
+    }
+  };
+
   const handleCreateEnrollment = async (e) => {
     e.preventDefault();
     setModalError('');
     const formData = new FormData(e.target);
-    const descTipo = formData.get('tipo_desconto');
+    const pctVal = parseFloat(enrollDescontoPct || '0');
+    const fixoVal = parseFloat(enrollDescontoFixo || '0');
+    const editadoManual = enrollDescontoManual || Math.abs(pctVal - enrollAutoPct) > 0.001 || fixoVal > 0;
+    if (editadoManual && !enrollDescontoMotivo.trim()) {
+      const msg = 'Informe o motivo da alteração manual do desconto.';
+      setModalError(msg);
+      showToast(msg, 'error');
+      return;
+    }
+
+    const qtdParcelasEfetiva =
+      enrollCondicaoPagamento === 'A_VISTA'
+        ? 1
+        : enrollCondicaoPagamento === 'PARCELADO'
+        ? parseInt(enrollQuantidadeParcelas || 1, 10)
+        : parseInt(enrollDuracaoMeses || 12, 10);
+
     const payload = {
-      aluno_id: parseInt(formData.get('aluno_id')),
-      turma_id: parseInt(formData.get('turma_id')),
-      curso_id: formData.get('curso_id') ? parseInt(formData.get('curso_id')) : (enrollSelectedCursoId ? parseInt(enrollSelectedCursoId) : null),
+      aluno_id: parseInt(formData.get('aluno_id'), 10),
+      turma_id: parseInt(formData.get('turma_id'), 10),
+      curso_id: formData.get('curso_id') ? parseInt(formData.get('curso_id'), 10) : (enrollSelectedCursoId ? parseInt(enrollSelectedCursoId, 10) : null),
       data_matricula: formData.get('data_matricula'),
       data_inicio: formData.get('data_inicio'),
       data_termino_previsto: formData.get('data_termino_previsto') || null,
-      valor_mensalidade: parseFloat(formData.get('valor_mensalidade') || '0'),
-      desconto_percentual: parseFloat(formData.get('desconto_percentual') || '0'),
-      tipo_desconto: descTipo && descTipo !== 'nenhum' ? descTipo : null,
-      dia_vencimento: parseInt(formData.get('dia_vencimento') || '10'),
-      quantidade_parcelas: parseInt(formData.get('quantidade_parcelas') || '12'),
-      aula_experimental: formData.get('aula_experimental') === 'on',
+      valor_mensalidade: parseFloat(enrollValorMensalidade || '0'),
+      duracao_contrato_meses: parseInt(enrollDuracaoMeses || 12, 10),
+      condicao_pagamento: enrollCondicaoPagamento,
+      plano_id: enrollPlanoId ? parseInt(enrollPlanoId, 10) : null,
+      descontos_ids: enrollDescontosIds,
+      desconto_percentual: pctVal,
+      desconto_valor_fixo: fixoVal,
+      desconto_editado_manualmente: editadoManual,
+      desconto_motivo_alteracao: editadoManual ? enrollDescontoMotivo.trim() : null,
+      dia_vencimento: parseInt(formData.get('dia_vencimento') || '10', 10),
+      quantidade_parcelas: qtdParcelasEfetiva,
+      aula_experimental: enrollIsExperimental,
+      is_cortesia: enrollIsCortesia,
+      tipo_cortesia: enrollIsCortesia ? enrollTipoCortesia : null,
       observacoes: formData.get('observacoes') || null,
     };
 
@@ -567,14 +702,15 @@ export default function App() {
       const created = await api.createEnrollment(payload);
       if (payload.aula_experimental) {
         showToast('Matrícula experimental registrada (sem cobrança financeira).');
+      } else if (payload.is_cortesia) {
+        showToast('Matrícula cortesia / sem cobrança registrada!');
       } else {
-        const qtd = created?.total_parcelas_geradas ?? payload.quantidade_parcelas;
-        showToast(`Aluno matriculado e ${qtd} parcela(s) gerada(s) no Financeiro!`);
+        const qtd = created?.total_parcelas_geradas ?? qtdParcelasEfetiva;
+        showToast(`Aluno matriculado e ${qtd} cobrança(s) gerada(s) no Financeiro!`);
       }
       setShowEnrollmentModal(false);
       setPreselectedStudentId(null);
-      setEnrollSelectedTurmaId('');
-      setEnrollSelectedCursoId('');
+      resetEnrollmentForm();
       await loadDashboardData();
     } catch (err) {
       setModalError(err.message || 'Erro ao realizar matrícula.');
@@ -589,13 +725,31 @@ export default function App() {
     setModalError('');
     const formData = new FormData(e.target);
     const descTipo = formData.get('tipo_desconto');
+    const isCortesiaUpd = formData.get('is_cortesia') === 'on';
+    const condUpd = formData.get('condicao_pagamento') || editingEnrollment.condicao_pagamento || 'MENSAL';
+    const durUpd = parseInt(formData.get('duracao_contrato_meses') || editingEnrollment.duracao_contrato_meses || '12', 10);
+    const qtdUpd =
+      condUpd === 'A_VISTA'
+        ? 1
+        : condUpd === 'PARCELADO'
+        ? parseInt(formData.get('quantidade_parcelas') || '1', 10)
+        : durUpd;
+
     const payload = {
       status: formData.get('status'),
+      data_termino_previsto: formData.get('data_termino_previsto') || null,
+      data_saida: formData.get('data_saida') || null,
       valor_mensalidade: parseFloat(formData.get('valor_mensalidade') || '0'),
+      duracao_contrato_meses: durUpd,
+      condicao_pagamento: condUpd,
       desconto_percentual: parseFloat(formData.get('desconto_percentual') || '0'),
+      desconto_valor_fixo: parseFloat(formData.get('desconto_valor_fixo') || '0'),
+      desconto_motivo_alteracao: formData.get('desconto_motivo_alteracao') || null,
       tipo_desconto: descTipo && descTipo !== 'nenhum' ? descTipo : null,
-      dia_vencimento: parseInt(formData.get('dia_vencimento') || '10'),
-      quantidade_parcelas: parseInt(formData.get('quantidade_parcelas') || '12'),
+      dia_vencimento: parseInt(formData.get('dia_vencimento') || '10', 10),
+      quantidade_parcelas: qtdUpd,
+      is_cortesia: isCortesiaUpd,
+      tipo_cortesia: isCortesiaUpd ? (formData.get('tipo_cortesia') || 'CONTRATO_QUITADO') : null,
       motivo_cancelamento: formData.get('motivo_cancelamento') || null,
       contrato_assinado: formData.get('contrato_assinado') === 'on',
       observacoes: formData.get('observacoes') || null,
@@ -608,12 +762,12 @@ export default function App() {
         showToast('Matrícula cancelada e parcelas em aberto canceladas no Financeiro!');
       } else if (payload.status === 'TRANCADA') {
         showToast('Matrícula trancada e parcelas futuras canceladas no Financeiro!');
-      } else if (payload.status === 'EXPERIMENTAL') {
-        showToast('Matrícula alterada para experimental e parcelas em aberto canceladas!');
+      } else if (payload.status === 'EXPERIMENTAL' || payload.is_cortesia) {
+        showToast('Matrícula atualizada sem cobrança financeira e parcelas em aberto canceladas!');
       } else {
         showToast(
           payload.status === 'ATIVA' && qtd > 0
-            ? `Matrícula atualizada! ${qtd} parcela(s) ativa(s) sincronizada(s) no Financeiro.`
+            ? `Matrícula atualizada! ${qtd} cobrança(s) ativa(s) sincronizada(s) no Financeiro.`
             : 'Matrícula atualizada com sucesso!'
         );
       }
@@ -621,6 +775,84 @@ export default function App() {
       await loadDashboardData();
     } catch (err) {
       setModalError(err.message || 'Erro ao atualizar matrícula.');
+      showToast(err.message, 'error');
+    }
+  };
+
+  // 4.1c. Planos e Descontos (Política da Direção)
+  const handleSaveDiscountTeto = async (e) => {
+    e.preventDefault();
+    try {
+      await api.updateDiscountSettings({
+        teto_maximo_desconto_percentual: parseFloat(tetoDescontoInput || '0'),
+      });
+      showToast('Teto máximo de desconto atualizado!');
+      await loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleSavePlan = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const tipoVal = formData.get('tipo');
+    const payload = {
+      nome: formData.get('nome'),
+      tipo: tipoVal,
+      condicao_pagamento: tipoVal === 'PLANO' ? (formData.get('condicao_pagamento') || 'PARCELADO') : null,
+      percentual_desconto: parseFloat(formData.get('percentual_desconto') || '0'),
+      meses_minimos: formData.get('meses_minimos') ? parseInt(formData.get('meses_minimos'), 10) : null,
+      descricao: formData.get('descricao') || null,
+      ...(editingPlan ? { ativo: formData.get('ativo') === 'on' } : {}),
+    };
+    try {
+      if (editingPlan) {
+        await api.updatePaymentPlan(editingPlan.id, payload);
+        showToast(`Política '${payload.nome}' atualizada!`);
+      } else {
+        await api.createPaymentPlan(payload);
+        showToast(`Política '${payload.nome}' criada!`);
+      }
+      setShowPlanModal(false);
+      setEditingPlan(null);
+      await loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeletePlan = async (plan) => {
+    if (!window.confirm(`Deseja excluir ou desativar '${plan.nome}'?`)) return;
+    try {
+      const res = await api.deletePaymentPlan(plan.id);
+      showToast(res.mensagem || 'Plano/desconto atualizado.');
+      await loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleSaveCourseRule = async (e) => {
+    e.preventDefault();
+    if (!ruleForm.curso_id || !ruleForm.plano_id) {
+      showToast('Selecione o curso e o plano/desconto.', 'error');
+      return;
+    }
+    try {
+      await api.upsertCourseDiscountRule({
+        curso_id: parseInt(ruleForm.curso_id, 10),
+        plano_id: parseInt(ruleForm.plano_id, 10),
+        permitido: Boolean(ruleForm.permitido),
+        percentual_override:
+          ruleForm.permitido && ruleForm.percentual_override !== ''
+            ? parseFloat(ruleForm.percentual_override)
+            : null,
+      });
+      showToast('Regra do curso salva! Válida apenas para novas matrículas.');
+      setRuleForm({ curso_id: '', plano_id: '', permitido: true, percentual_override: '' });
+      await loadDashboardData();
+    } catch (err) {
       showToast(err.message, 'error');
     }
   };
@@ -1146,8 +1378,11 @@ export default function App() {
             ] : []),
             { id: 'classes', label: isProfessor ? 'Minhas Turmas' : 'Turmas & Horários', icon: Calendar },
             ...(!isProfessor ? [
-              { id: 'rooms', label: 'Salas & Capacidade (9)', icon: Palette },
+              { id: 'rooms', label: 'Salas & Capacidade', icon: Palette },
               { id: 'financial', label: 'Financeiro & DRE', icon: DollarSign },
+            ] : []),
+            ...(isAdminOrCoord ? [
+              { id: 'plans', label: 'Planos e Descontos', icon: ShieldCheck },
             ] : []),
             { id: 'attendance', label: 'Frequência & Diário', icon: Clock },
             ...(!isProfessor ? [
@@ -1407,11 +1642,22 @@ export default function App() {
                       return (
                         <tr key={st.id} className="hover:bg-slate-50/80 transition">
                           <td className="px-6 py-4 font-medium text-slate-900">
-                            <div>{st.nome}</div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span>{st.nome}</span>
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                st.tipo_liberacao === 'SOZINHO'
+                                  ? 'bg-sky-100 text-sky-800'
+                                  : 'bg-slate-100 text-slate-600'
+                              }`}>
+                                {st.tipo_liberacao === 'SOZINHO' ? 'Sai sozinho' : 'Com acompanhante'}
+                              </span>
+                            </div>
                             <span className="text-[11px] text-slate-400">
                               Nasc: {formatDateBR(st.data_nascimento)}
                             </span>
                             {st.alergias && <span className="block text-[11px] text-amber-700">Alergia: {st.alergias}</span>}
+                            {st.contatos_emergencia && <span className="block text-[11px] text-rose-700">Emergência: {st.contatos_emergencia}</span>}
+                            {st.observacoes && <span className="block text-[11px] text-slate-500">Obs.: {st.observacoes}</span>}
                           </td>
                           <td className="px-6 py-4">
                             {stEnrs.length > 0 ? (
@@ -1471,6 +1717,7 @@ export default function App() {
                             )}
                             <button
                               onClick={() => {
+                                resetEnrollmentForm();
                                 setPreselectedStudentId(st.id);
                                 setModalError('');
                                 setShowEnrollmentModal(true);
@@ -1690,6 +1937,7 @@ export default function App() {
                 </div>
                 <button
                   onClick={() => {
+                    resetEnrollmentForm();
                     setPreselectedStudentId(null);
                     setModalError('');
                     setShowEnrollmentModal(true);
@@ -1724,12 +1972,27 @@ export default function App() {
                           {enr.curso_nome && (
                             <span className="text-[11px] text-slate-500 block">{enr.curso_nome}</span>
                           )}
+                          <span className="text-[10px] text-slate-500 block">
+                            {enr.duracao_contrato_meses || 12} mes(es) • {
+                              enr.condicao_pagamento === 'A_VISTA' ? 'À vista' :
+                              enr.condicao_pagamento === 'PARCELADO' ? `Parcelado ${enr.quantidade_parcelas || 1}x` :
+                              'Mensal'
+                            }{enr.plano_nome ? ` (${enr.plano_nome})` : ''}
+                          </span>
                           {enr.aula_experimental && (
-                            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Aula Experimental</span>
+                            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded mr-1">Aula Experimental</span>
+                          )}
+                          {enr.is_cortesia && (
+                            <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 px-1.5 py-0.5 rounded">
+                              Cortesia ({enr.tipo_cortesia || 'Sem cobrança'})
+                            </span>
                           )}
                         </td>
                         <td className="px-6 py-4 text-xs">
-                          {formatDateBR(enr.data_inicio)}
+                          <div>Início: {formatDateBR(enr.data_inicio)}</div>
+                          {enr.data_saida && (
+                            <div className="text-[11px] text-red-600">Saída: {formatDateBR(enr.data_saida)}</div>
+                          )}
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-bold text-slate-800 block">
@@ -1738,18 +2001,28 @@ export default function App() {
                           <span className="text-[11px] text-slate-500 block">
                             Dia {enr.dia_vencimento || 10} • {enr.quantidade_parcelas || 12}x
                           </span>
-                          {!enr.aula_experimental && (
+                          {!enr.aula_experimental && !enr.is_cortesia && (
                             <span className={`text-[10px] font-semibold block mt-0.5 ${
                               (enr.total_parcelas_geradas || 0) >= (enr.quantidade_parcelas || 12)
                                 ? 'text-emerald-600'
                                 : 'text-amber-700'
                             }`}>
-                              {enr.total_parcelas_geradas || 0}/{enr.quantidade_parcelas || 12} parcelas no financeiro
+                              {enr.total_parcelas_geradas || 0}/{enr.quantidade_parcelas || 12} cobranças no financeiro
                             </span>
                           )}
-                          {enr.desconto_percentual > 0 && (
+                          {(enr.desconto_percentual > 0 || (enr.desconto_valor_fixo || 0) > 0) && (
                             <span className="text-[11px] text-emerald-600 block">
-                              {enr.desconto_percentual}% off ({enr.tipo_desconto})
+                              {enr.desconto_percentual > 0 ? `${enr.desconto_percentual}%` : ''}
+                              {enr.desconto_percentual > 0 && (enr.desconto_valor_fixo || 0) > 0 ? ' + ' : ''}
+                              {(enr.desconto_valor_fixo || 0) > 0 ? `R$ ${Number(enr.desconto_valor_fixo).toFixed(2)}` : ''} off
+                            </span>
+                          )}
+                          {enr.desconto_editado_manualmente && (
+                            <span
+                              className="inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800"
+                              title={enr.desconto_motivo_alteracao || 'Alterado manualmente'}
+                            >
+                              Desconto alterado manualmente{enr.desconto_alterado_por_nome ? ` (${enr.desconto_alterado_por_nome})` : ''}
                             </span>
                           )}
                         </td>
@@ -1767,7 +2040,7 @@ export default function App() {
                           )}
                         </td>
                         <td className="px-6 py-4 text-right space-x-1 whitespace-nowrap">
-                          {enr.status === 'ATIVA' && !enr.aula_experimental && (enr.total_parcelas_geradas || 0) < (enr.quantidade_parcelas || 12) && (
+                          {enr.status === 'ATIVA' && !enr.aula_experimental && !enr.is_cortesia && (enr.total_parcelas_geradas || 0) < (enr.quantidade_parcelas || 12) && (
                             <button
                               onClick={() => handleGenerateEnrollmentInvoices(enr.id)}
                               className="px-2.5 py-1.5 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg transition inline-flex items-center gap-1 shadow-sm"
@@ -2187,7 +2460,7 @@ export default function App() {
                 <div className="p-4 sm:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="font-bold text-slate-800 text-lg">Mensalidades e Títulos Financeiros</h3>
-                    <p className="text-xs text-slate-500">Formas homologadas: PIX, Cartão, Boleto e Dinheiro. Receba mensalidades com baixa imediata.</p>
+                    <p className="text-xs text-slate-500">Formas homologadas: PIX, Cartão, Boleto, Dinheiro e Transferência. Receba mensalidades com baixa imediata.</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <button
@@ -2400,9 +2673,293 @@ export default function App() {
                   </table>
                 </div>
               </div>
+
+              {/* Relatório de Descontos Concedidos por Tipo e por Mês */}
+              {discountsReport && (
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-base">Relatório de Descontos Concedidos</h3>
+                      <p className="text-xs text-slate-500">Visão consolidada por tipo de plano/desconto, competência mensal e auditoria de edições manuais.</p>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[11px] uppercase font-semibold text-slate-400 block">Total em Descontos</span>
+                      <span className="text-lg font-bold text-amber-700">
+                        R$ {Number(discountsReport.total_descontos_concedidos || 0).toFixed(2)} ({discountsReport.total_faturas_com_desconto} cobranças)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700 uppercase">
+                        Descontos por Tipo / Política
+                      </div>
+                      <table className="w-full text-xs text-left text-slate-600">
+                        <thead className="bg-slate-50/50 text-slate-500 border-b border-slate-100">
+                          <tr>
+                            <th className="px-4 py-2">Tipo</th>
+                            <th className="px-4 py-2 text-center">Matrículas</th>
+                            <th className="px-4 py-2 text-center">Cobranças</th>
+                            <th className="px-4 py-2 text-right">Total Descontado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(discountsReport.por_tipo || []).length === 0 ? (
+                            <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-400">Nenhum desconto registrado.</td></tr>
+                          ) : discountsReport.por_tipo.map((item, idx) => (
+                            <tr key={idx}>
+                              <td className="px-4 py-2 font-semibold text-slate-800">{item.tipo}</td>
+                              <td className="px-4 py-2 text-center">{item.quantidade_matriculas}</td>
+                              <td className="px-4 py-2 text-center">{item.quantidade_faturas}</td>
+                              <td className="px-4 py-2 text-right font-bold text-amber-700">R$ {Number(item.total_desconto).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 text-xs font-bold text-slate-700 uppercase">
+                        Descontos por Mês (Competência)
+                      </div>
+                      <table className="w-full text-xs text-left text-slate-600">
+                        <thead className="bg-slate-50/50 text-slate-500 border-b border-slate-100">
+                          <tr>
+                            <th className="px-4 py-2">Mês</th>
+                            <th className="px-4 py-2 text-right">Bruto</th>
+                            <th className="px-4 py-2 text-right">Desconto</th>
+                            <th className="px-4 py-2 text-right">Líquido</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(discountsReport.por_mes || []).length === 0 ? (
+                            <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-400">Sem competências registradas.</td></tr>
+                          ) : discountsReport.por_mes.map((m, idx) => (
+                            <tr key={idx}>
+                              <td className="px-4 py-2 font-semibold text-slate-800">{m.competencia}</td>
+                              <td className="px-4 py-2 text-right">R$ {Number(m.total_bruto).toFixed(2)}</td>
+                              <td className="px-4 py-2 text-right font-bold text-amber-700">R$ {Number(m.total_desconto).toFixed(2)}</td>
+                              <td className="px-4 py-2 text-right font-semibold text-emerald-700">R$ {Number(m.total_liquido).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {(discountsReport.alteracoes_manuais || []).length > 0 && (
+                    <div className="border border-amber-200 bg-amber-50/40 rounded-xl p-4">
+                      <h4 className="text-xs font-bold text-amber-900 uppercase mb-2">Auditoria de Descontos Alterados Manualmente</h4>
+                      <div className="space-y-1.5 text-xs">
+                        {discountsReport.alteracoes_manuais.map((am) => (
+                          <div key={am.matricula_id} className="flex flex-wrap items-center justify-between gap-2 bg-white p-2 rounded border border-amber-100">
+                            <div>
+                              <strong className="text-slate-800">{am.aluno_nome}</strong> • {am.turma_nome}
+                              <span className="text-slate-500 block">
+                                Desconto: {am.desconto_percentual}%{am.desconto_valor_fixo > 0 ? ` + R$ ${Number(am.desconto_valor_fixo).toFixed(2)}` : ''} • Motivo: {am.motivo || 'Não informado'}
+                              </span>
+                            </div>
+                            <span className="text-[11px] font-semibold text-amber-800">
+                              Por: {am.alterado_por || 'Usuário'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             );
           })()}
+
+          {/* TAB: PLANOS E DESCONTOS */}
+          {activeTab === 'plans' && isAdminOrCoord && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-lg">Política de Planos e Descontos</h3>
+                  <p className="text-xs text-slate-500">
+                    Configure percentuais sem depender de código. Alterações valem apenas para <strong>novas matrículas</strong> (não retroagem nas já feitas).
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setEditingPlan(null);
+                    setShowPlanModal(true);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Novo Plano / Desconto
+                </button>
+              </div>
+
+              {/* Teto Máximo Cumulativo */}
+              <form onSubmit={handleSaveDiscountTeto} className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                <div>
+                  <h4 className="font-bold text-slate-800 text-sm">Teto Máximo de Desconto Cumulativo (%)</h4>
+                  <p className="text-xs text-slate-500">Ao somar Plano + Irmão + Indicação na matrícula, o sistema limita automaticamente o percentual total a este teto.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min="0"
+                    max="100"
+                    value={tetoDescontoInput}
+                    onChange={(e) => setTetoDescontoInput(e.target.value)}
+                    className="w-24 px-3 py-2 border rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-amber-500"
+                  />
+                  <span className="text-sm font-bold text-slate-600">%</span>
+                  <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">
+                    Salvar Teto
+                  </button>
+                </div>
+              </form>
+
+              {/* Lista de Planos e Tipos de Desconto */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {(discountPolicies.planos || []).map((pl) => (
+                  <div key={pl.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                          pl.tipo === 'PLANO' ? 'bg-amber-100 text-amber-800' : 'bg-sky-100 text-sky-800'
+                        }`}>
+                          {pl.tipo === 'PLANO' ? `Plano (${pl.condicao_pagamento || 'PARCELADO'})` : 'Desconto Adicional'}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${pl.ativo ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>
+                            {pl.ativo ? 'Ativo' : 'Inativo'}
+                          </span>
+                          <button
+                            onClick={() => {
+                              setEditingPlan(pl);
+                              setShowPlanModal(true);
+                            }}
+                            className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded"
+                            title="Editar plano/desconto"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeletePlan(pl)}
+                            className="p-1 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded"
+                            title="Excluir ou desativar"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <h4 className="text-base font-bold text-slate-800 mt-2">{pl.nome}</h4>
+                      {pl.descricao && <p className="text-xs text-slate-500 mt-1">{pl.descricao}</p>}
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-xs text-slate-500">
+                        {pl.meses_minimos ? `Mínimo ${pl.meses_minimos} mes(es)` : 'Aplicação livre'}
+                      </span>
+                      <span className="text-xl font-bold text-emerald-700">{Number(pl.percentual_desconto).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Regras Específicas por Curso */}
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+                <div>
+                  <h4 className="font-bold text-slate-800 text-base">Exceções e Regras por Curso</h4>
+                  <p className="text-xs text-slate-500">Defina se determinado curso não possui desconto à vista (ou outro plano) ou use um percentual específico.</p>
+                </div>
+
+                <form onSubmit={handleSaveCourseRule} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Curso</label>
+                    <select
+                      value={ruleForm.curso_id}
+                      onChange={(e) => setRuleForm(prev => ({ ...prev, curso_id: e.target.value }))}
+                      className="w-full px-3 py-2 border rounded-lg text-xs bg-white"
+                      required
+                    >
+                      <option value="">-- Selecione --</option>
+                      {courses.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Plano / Desconto</label>
+                    <select
+                      value={ruleForm.plano_id}
+                      onChange={(e) => setRuleForm(prev => ({ ...prev, plano_id: e.target.value }))}
+                      className="w-full px-3 py-2 border rounded-lg text-xs bg-white"
+                      required
+                    >
+                      <option value="">-- Selecione --</option>
+                      {(discountPolicies.planos || []).map(p => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Permissão no Curso</label>
+                    <select
+                      value={ruleForm.permitido ? 'SIM' : 'NAO'}
+                      onChange={(e) => setRuleForm(prev => ({ ...prev, permitido: e.target.value === 'SIM' }))}
+                      className="w-full px-3 py-2 border rounded-lg text-xs bg-white"
+                    >
+                      <option value="SIM">Permitido (com % próprio)</option>
+                      <option value="NAO">Sem desconto neste curso (0%)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">% Específico (opcional)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      max="100"
+                      disabled={!ruleForm.permitido}
+                      value={ruleForm.percentual_override}
+                      onChange={(e) => setRuleForm(prev => ({ ...prev, percentual_override: e.target.value }))}
+                      placeholder="Ex: 5"
+                      className="w-full px-3 py-2 border rounded-lg text-xs bg-white disabled:bg-slate-100"
+                    />
+                  </div>
+                  <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">
+                    Salvar Regra
+                  </button>
+                </form>
+
+                {(discountPolicies.regras_cursos || []).length > 0 && (
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                    <table className="w-full text-xs text-left text-slate-600">
+                      <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                        <tr>
+                          <th className="px-4 py-2.5">Curso</th>
+                          <th className="px-4 py-2.5">Plano / Desconto</th>
+                          <th className="px-4 py-2.5">Regra Aplicada</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {discountPolicies.regras_cursos.map((reg) => (
+                          <tr key={reg.id}>
+                            <td className="px-4 py-2.5 font-semibold text-slate-800">{reg.curso_nome}</td>
+                            <td className="px-4 py-2.5">{reg.plano_nome}</td>
+                            <td className="px-4 py-2.5">
+                              {!reg.permitido ? (
+                                <span className="px-2 py-0.5 rounded bg-red-100 text-red-700 font-semibold">Bloqueado (0% neste curso)</span>
+                              ) : reg.percentual_override != null ? (
+                                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold">Percentual próprio: {reg.percentual_override}%</span>
+                              ) : (
+                                <span className="text-slate-500">Segue política padrão</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* TAB 9: FREQUÊNCIA & DIÁRIO DE CLASSE */}
           {activeTab === 'attendance' && (
@@ -3140,7 +3697,7 @@ export default function App() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={handleSaveStudent} className="space-y-4 mt-4">
+            <form key={editingStudent ? `edit-st-${editingStudent.id}` : 'new-st'} onSubmit={handleSaveStudent} className="space-y-4 mt-4">
               {modalError && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium">
                   {modalError}
@@ -3215,6 +3772,51 @@ export default function App() {
                   defaultValue={editingStudent?.alergias || ''}
                   className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Observações Gerais</label>
+                <textarea
+                  name="observacoes"
+                  rows="2"
+                  placeholder="Preferências pedagógicas, horários, observações da família..."
+                  defaultValue={editingStudent?.observacoes || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                ></textarea>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Contatos de Emergência</label>
+                <textarea
+                  name="contatos_emergencia"
+                  rows="2"
+                  placeholder="Ex: Maria (Mãe) - (19) 99999-9999; Carlos (Avô) - (19) 98888-8888"
+                  defaultValue={editingStudent?.contatos_emergencia || ''}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                ></textarea>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Liberação na Saída</label>
+                  <select
+                    name="tipo_liberacao"
+                    defaultValue={editingStudent?.tipo_liberacao || 'ACOMPANHANTE'}
+                    className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="ACOMPANHANTE">Somente com acompanhante</option>
+                    <option value="SOZINHO">Pode sair sozinho</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Acompanhantes Autorizados</label>
+                  <input
+                    name="acompanhantes_autorizados"
+                    placeholder="Ex: Mãe, Pai, Tio João..."
+                    defaultValue={editingStudent?.acompanhantes_autorizados || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                  />
+                </div>
               </div>
 
               {/* Seção Responsável Legal (Para menores) */}
@@ -3679,13 +4281,17 @@ export default function App() {
                         ? selTurma.cursos
                         : courses.filter(cr => cr.id === selTurma.curso_id);
                       const firstCurso = turmaCursos[0];
-                      setEnrollSelectedCursoId(firstCurso ? String(firstCurso.id) : '');
+                      const cidStr = firstCurso ? String(firstCurso.id) : '';
+                      setEnrollSelectedCursoId(cidStr);
                       const fullCourse = firstCurso ? courses.find(cr => cr.id === firstCurso.id) : null;
                       const valMensal = fullCourse?.valor_mensalidade ?? firstCurso?.valor_mensalidade;
                       if (valMensal != null) {
-                        const valInput = document.getElementById('enroll_valor_mensalidade');
-                        if (valInput) valInput.value = Number(valMensal).toFixed(2);
+                        setEnrollValorMensalidade(Number(valMensal).toFixed(2));
                       }
+                      if (fullCourse?.duracao_meses) {
+                        setEnrollDuracaoMeses(fullCourse.duracao_meses);
+                      }
+                      applyEnrollmentPolicy(cidStr, enrollPlanoId, enrollDescontosIds);
                     } else {
                       setEnrollSelectedCursoId('');
                     }
@@ -3724,9 +4330,12 @@ export default function App() {
                         setEnrollSelectedCursoId(cid);
                         const fullCourse = courses.find(cr => cr.id === parseInt(cid, 10));
                         if (fullCourse && fullCourse.valor_mensalidade != null) {
-                          const valInput = document.getElementById('enroll_valor_mensalidade');
-                          if (valInput) valInput.value = Number(fullCourse.valor_mensalidade).toFixed(2);
+                          setEnrollValorMensalidade(Number(fullCourse.valor_mensalidade).toFixed(2));
                         }
+                        if (fullCourse?.duracao_meses) {
+                          setEnrollDuracaoMeses(fullCourse.duracao_meses);
+                        }
+                        applyEnrollmentPolicy(cid, enrollPlanoId, enrollDescontosIds);
                       }}
                       className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
                     >
@@ -3739,7 +4348,7 @@ export default function App() {
                 );
               })()}
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Data da Matrícula</label>
                   <input
@@ -3751,7 +4360,7 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Data de Início das Aulas</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Início das Aulas</label>
                   <input
                     name="data_inicio"
                     type="date"
@@ -3760,84 +4369,325 @@ export default function App() {
                     className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Mensalidade (R$)</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Fim Previsto</label>
                   <input
-                    id="enroll_valor_mensalidade"
-                    name="valor_mensalidade"
-                    type="number"
-                    step="0.01"
-                    defaultValue="280.00"
-                    required
-                    className="w-full px-3 py-2 border rounded-lg text-sm font-bold text-slate-800 outline-none focus:border-amber-500"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Tipo de Desconto</label>
-                  <select
-                    name="tipo_desconto"
-                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
-                  >
-                    <option value="nenhum">Nenhum</option>
-                    <option value="irmao">Irmão (Família)</option>
-                    <option value="indicacao">Indicação</option>
-                    <option value="bolsa">Bolsa</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Desconto (%)</label>
-                  <input
-                    name="desconto_percentual"
-                    type="number"
-                    defaultValue="0"
-                    min="0"
-                    max="100"
+                    name="data_termino_previsto"
+                    type="date"
                     className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dia Preferencial de Vencimento</label>
-                  <select
-                    name="dia_vencimento"
-                    defaultValue="10"
-                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
-                  >
-                    <option value="5">Dia 05 de cada mês</option>
-                    <option value="10">Dia 10 de cada mês (Padrão)</option>
-                    <option value="15">Dia 15 de cada mês</option>
-                    <option value="20">Dia 20 de cada mês</option>
-                    <option value="25">Dia 25 de cada mês</option>
-                  </select>
+              {/* Duração do Contrato vs Condição de Pagamento */}
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                <span className="text-xs font-bold text-slate-800 block">Duração do Contrato & Condição de Pagamento</span>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Valor Mensal (R$)</label>
+                    <input
+                      id="enroll_valor_mensalidade"
+                      name="valor_mensalidade"
+                      type="number"
+                      step="0.01"
+                      value={enrollValorMensalidade}
+                      onChange={(e) => setEnrollValorMensalidade(e.target.value)}
+                      required
+                      className="w-full px-3 py-2 border rounded-lg text-sm font-bold text-slate-800 bg-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Duração (Meses)</label>
+                    <input
+                      name="duracao_contrato_meses"
+                      type="number"
+                      min="1"
+                      max="48"
+                      value={enrollDuracaoMeses}
+                      onChange={(e) => setEnrollDuracaoMeses(parseInt(e.target.value || '1', 10))}
+                      required
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Condição</label>
+                    <select
+                      name="condicao_pagamento"
+                      value={enrollCondicaoPagamento}
+                      onChange={(e) => {
+                        const cond = e.target.value;
+                        setEnrollCondicaoPagamento(cond);
+                        const planosAtivos = (discountPolicies?.planos || []).filter(p => p.tipo === 'PLANO' && p.ativo);
+                        let matchedPlanId = enrollPlanoId;
+                        if (cond === 'A_VISTA') {
+                          const av = planosAtivos.find(p => p.condicao_pagamento === 'A_VISTA');
+                          matchedPlanId = av ? String(av.id) : '';
+                          setEnrollQuantidadeParcelas(1);
+                        } else if (cond === 'MENSAL') {
+                          const mn = planosAtivos.find(p => p.codigo === 'MENSAL' || p.condicao_pagamento === 'MENSAL');
+                          matchedPlanId = mn ? String(mn.id) : '';
+                          setEnrollQuantidadeParcelas(enrollDuracaoMeses);
+                        } else {
+                          const pr = planosAtivos.find(p => p.condicao_pagamento === 'PARCELADO');
+                          if (!matchedPlanId && pr) matchedPlanId = String(pr.id);
+                          if (enrollQuantidadeParcelas > 12) setEnrollQuantidadeParcelas(12);
+                        }
+                        setEnrollPlanoId(matchedPlanId);
+                        applyEnrollmentPolicy(enrollSelectedCursoId, matchedPlanId, enrollDescontosIds, true);
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="MENSAL">Mensal</option>
+                      <option value="A_VISTA">À vista</option>
+                      <option value="PARCELADO">Parcelado (1x–12x)</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Qtd. de Parcelas / Cobranças</label>
-                  <select
-                    name="quantidade_parcelas"
-                    defaultValue="12"
-                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
-                      <option key={n} value={n}>{n}x parcela{n > 1 ? 's' : ''} ({n} {n > 1 ? 'meses' : 'mês'})</option>
-                    ))}
-                  </select>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Plano da Política</label>
+                    <select
+                      value={enrollPlanoId}
+                      onChange={(e) => {
+                        const pid = e.target.value;
+                        setEnrollPlanoId(pid);
+                        const plObj = (discountPolicies?.planos || []).find(p => String(p.id) === pid);
+                        if (plObj?.condicao_pagamento) {
+                          setEnrollCondicaoPagamento(plObj.condicao_pagamento);
+                          if (plObj.condicao_pagamento === 'A_VISTA') setEnrollQuantidadeParcelas(1);
+                        }
+                        applyEnrollmentPolicy(enrollSelectedCursoId, pid, enrollDescontosIds, true);
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="">-- Sem plano específico --</option>
+                      {(discountPolicies?.planos || []).filter(p => p.tipo === 'PLANO' && p.ativo).map(p => (
+                        <option key={p.id} value={p.id}>{p.nome} ({p.percentual_desconto}%)</option>
+                      ))}
+                    </select>
+                  </div>
+                  {enrollCondicaoPagamento === 'PARCELADO' ? (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">Parcelas (1x a 12x)</label>
+                      <select
+                        value={enrollQuantidadeParcelas}
+                        onChange={(e) => setEnrollQuantidadeParcelas(parseInt(e.target.value, 10))}
+                        className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                      >
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(n => (
+                          <option key={n} value={n}>{n}x parcela{n > 1 ? 's' : ''}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">Dia de Vencimento</label>
+                      <select
+                        name="dia_vencimento"
+                        defaultValue="10"
+                        className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                      >
+                        <option value="5">Dia 05</option>
+                        <option value="10">Dia 10 (Padrão)</option>
+                        <option value="15">Dia 15</option>
+                        <option value="20">Dia 20</option>
+                        <option value="25">Dia 25</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
+
+                {enrollCondicaoPagamento === 'PARCELADO' && (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Dia Preferencial de Vencimento</label>
+                    <select
+                      name="dia_vencimento"
+                      defaultValue="10"
+                      className="w-full px-3 py-2 border rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="5">Dia 05</option>
+                      <option value="10">Dia 10 (Padrão)</option>
+                      <option value="15">Dia 15</option>
+                      <option value="20">Dia 20</option>
+                      <option value="25">Dia 25</option>
+                    </select>
+                  </div>
+                )}
+
+                {/* Descontos Adicionais Cumulativos */}
+                {(discountPolicies?.planos || []).some(p => p.tipo === 'DESCONTO' && p.ativo) && (
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Descontos Adicionais (teto máximo: {discountPolicies?.configuracoes?.teto_maximo_desconto_percentual ?? 30}%)
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {(discountPolicies?.planos || []).filter(p => p.tipo === 'DESCONTO' && p.ativo).map(d => {
+                        const checked = enrollDescontosIds.includes(d.id);
+                        return (
+                          <label
+                            key={d.id}
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs cursor-pointer ${
+                              checked ? 'bg-amber-50 border-amber-300 text-amber-900 font-semibold' : 'bg-white border-slate-200 text-slate-700'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                const next = checked
+                                  ? enrollDescontosIds.filter(id => id !== d.id)
+                                  : [...enrollDescontosIds, d.id];
+                                setEnrollDescontosIds(next);
+                                applyEnrollmentPolicy(enrollSelectedCursoId, enrollPlanoId, next, true);
+                              }}
+                              className="rounded text-amber-600"
+                            />
+                            <span>{d.nome} (+{d.percentual_desconto}%)</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Desconto (%) <span className="text-slate-400">(Sugerido: {enrollAutoPct}%)</span>
+                    </label>
+                    <input
+                      name="desconto_percentual"
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      value={enrollDescontoPct}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEnrollDescontoPct(val);
+                        const num = parseFloat(val || '0');
+                        setEnrollDescontoManual(Math.abs(num - enrollAutoPct) > 0.001 || parseFloat(enrollDescontoFixo || '0') > 0);
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">Desconto Adicional (R$)</label>
+                    <input
+                      name="desconto_valor_fixo"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={enrollDescontoFixo}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEnrollDescontoFixo(val);
+                        const numFixo = parseFloat(val || '0');
+                        const numPct = parseFloat(enrollDescontoPct || '0');
+                        setEnrollDescontoManual(numFixo > 0 || Math.abs(numPct - enrollAutoPct) > 0.001);
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {enrollDescontoManual && (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                    <span className="text-[11px] font-bold text-amber-900 block">
+                      ⚠ Desconto alterado manualmente (será registrado com usuário e motivo)
+                    </span>
+                    <input
+                      value={enrollDescontoMotivo}
+                      onChange={(e) => setEnrollDescontoMotivo(e.target.value)}
+                      placeholder="Informe o motivo da alteração manual do desconto *"
+                      required
+                      className="w-full px-3 py-1.5 border border-amber-300 rounded-lg text-xs bg-white outline-none focus:border-amber-500"
+                    />
+                  </div>
+                )}
+
+                {/* Prévia do Contrato */}
+                {(() => {
+                  const mensalNum = parseFloat(enrollValorMensalidade || '0') || 0;
+                  const durNum = Math.max(1, parseInt(enrollDuracaoMeses || 1, 10));
+                  const bruto = mensalNum * durNum;
+                  const pctNum = parseFloat(enrollDescontoPct || '0') || 0;
+                  const fixoNum = parseFloat(enrollDescontoFixo || '0') || 0;
+                  const descReais = Math.min(bruto, bruto * (pctNum / 100) + fixoNum);
+                  const liquido = Math.max(0, bruto - descReais);
+                  const qtdCobr =
+                    enrollCondicaoPagamento === 'A_VISTA'
+                      ? 1
+                      : enrollCondicaoPagamento === 'PARCELADO'
+                      ? Math.max(1, Math.min(12, parseInt(enrollQuantidadeParcelas || 1, 10)))
+                      : durNum;
+                  const porCobr = liquido / qtdCobr;
+                  return (
+                    <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 space-y-0.5">
+                      <div>
+                        Total do contrato ({durNum}x R$ {mensalNum.toFixed(2)}): <strong>R$ {bruto.toFixed(2)}</strong>
+                      </div>
+                      {descReais > 0 && (
+                        <div>Desconto total aplicado: <strong>- R$ {descReais.toFixed(2)}</strong></div>
+                      )}
+                      <div>
+                        {enrollIsCortesia || enrollIsExperimental ? (
+                          <strong>Sem cobrança financeira ({enrollIsExperimental ? 'Aula experimental' : 'Cortesia'})</strong>
+                        ) : (
+                          <>Valor líquido: <strong>R$ {liquido.toFixed(2)}</strong> • <strong>{qtdCobr}x de R$ {porCobr.toFixed(2)}</strong></>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
-              <div className="p-2.5 bg-blue-50 border border-blue-200/60 rounded-lg text-xs text-blue-800">
-                💳 Ao confirmar a matrícula, o sistema gerará automaticamente todas as mensalidades do aluno no módulo Financeiro para acompanhamento e baixa de recebimento.
-              </div>
+              <div className="space-y-2 pt-1">
+                <div className="flex items-center gap-2">
+                  <input
+                    name="aula_experimental"
+                    type="checkbox"
+                    id="aula_exp"
+                    checked={enrollIsExperimental}
+                    onChange={(e) => {
+                      setEnrollIsExperimental(e.target.checked);
+                      if (e.target.checked) setEnrollIsCortesia(false);
+                    }}
+                    className="rounded text-amber-600"
+                  />
+                  <label htmlFor="aula_exp" className="text-xs text-slate-600 font-medium">
+                    É uma aula experimental <span className="text-slate-400">(não gera parcelas no Financeiro)</span>
+                  </label>
+                </div>
 
-              <div className="flex items-center gap-2 pt-1">
-                <input name="aula_experimental" type="checkbox" id="aula_exp" className="rounded text-amber-600" />
-                <label htmlFor="aula_exp" className="text-xs text-slate-600 font-medium">
-                  É uma aula experimental / cortesia <span className="text-slate-400">(não gera parcelas no Financeiro)</span>
-                </label>
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-xs text-slate-700 font-medium cursor-pointer">
+                    <input
+                      name="is_cortesia"
+                      type="checkbox"
+                      checked={enrollIsCortesia}
+                      onChange={(e) => {
+                        setEnrollIsCortesia(e.target.checked);
+                        if (e.target.checked) setEnrollIsExperimental(false);
+                      }}
+                      className="rounded text-purple-600"
+                    />
+                    <span>Matrícula cortesia / sem cobrança</span>
+                  </label>
+                  {enrollIsCortesia && (
+                    <select
+                      name="tipo_cortesia"
+                      value={enrollTipoCortesia}
+                      onChange={(e) => setEnrollTipoCortesia(e.target.value)}
+                      className="px-2.5 py-1 border rounded-lg text-xs bg-white"
+                    >
+                      <option value="CONTRATO_QUITADO">Contrato quitado</option>
+                      <option value="BOLSA_100">Bolsa 100%</option>
+                      <option value="REPOSICAO">Reposição</option>
+                    </select>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -3886,7 +4736,7 @@ export default function App() {
               </button>
             </div>
 
-            <form onSubmit={handleUpdateEnrollment} className="space-y-4 mt-4">
+            <form key={`edit-enr-${editingEnrollment.id}`} onSubmit={handleUpdateEnrollment} className="space-y-4 mt-4">
               {modalError && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 font-medium">
                   {modalError}
@@ -3896,6 +4746,12 @@ export default function App() {
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1 text-xs">
                 <div><span className="font-semibold text-slate-700">Aluno:</span> {editingEnrollment.aluno_nome}</div>
                 <div><span className="font-semibold text-slate-700">Turma:</span> {editingEnrollment.turma_nome}</div>
+                {editingEnrollment.desconto_editado_manualmente && (
+                  <div className="text-amber-800 font-semibold">
+                    Desconto alterado manualmente por {editingEnrollment.desconto_alterado_por_nome || 'Usuário'}
+                    {editingEnrollment.desconto_motivo_alteracao ? ` — Motivo: ${editingEnrollment.desconto_motivo_alteracao}` : ''}
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -3928,6 +4784,53 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Fim Previsto do Contrato</label>
+                  <input
+                    name="data_termino_previsto"
+                    type="date"
+                    defaultValue={editingEnrollment.data_termino_previsto || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Data de Saída / Cancelamento</label>
+                  <input
+                    name="data_saida"
+                    type="date"
+                    defaultValue={editingEnrollment.data_saida || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Duração (Meses)</label>
+                  <input
+                    name="duracao_contrato_meses"
+                    type="number"
+                    min="1"
+                    max="48"
+                    defaultValue={editingEnrollment.duracao_contrato_meses || 12}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Condição de Pagamento</label>
+                  <select
+                    name="condicao_pagamento"
+                    defaultValue={editingEnrollment.condicao_pagamento || 'MENSAL'}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="MENSAL">Mensal</option>
+                    <option value="A_VISTA">À vista</option>
+                    <option value="PARCELADO">Parcelado (1x–12x)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Tipo de Desconto</label>
                   <select
                     name="tipo_desconto"
@@ -3938,6 +4841,9 @@ export default function App() {
                     <option value="irmao">Irmão (Família)</option>
                     <option value="indicacao">Indicação</option>
                     <option value="bolsa">Bolsa</option>
+                    <option value="plano">Plano</option>
+                    <option value="combinado">Combinado</option>
+                    <option value="manual">Manual</option>
                   </select>
                 </div>
                 <div>
@@ -3945,12 +4851,55 @@ export default function App() {
                   <input
                     name="desconto_percentual"
                     type="number"
+                    step="0.1"
                     defaultValue={editingEnrollment.desconto_percentual || 0}
                     min="0"
                     max="100"
                     className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Desconto (R$)</label>
+                  <input
+                    name="desconto_valor_fixo"
+                    type="number"
+                    step="0.01"
+                    defaultValue={editingEnrollment.desconto_valor_fixo || 0}
+                    min="0"
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Motivo da Alteração de Desconto (se alterado)</label>
+                <input
+                  name="desconto_motivo_alteracao"
+                  defaultValue={editingEnrollment.desconto_motivo_alteracao || ''}
+                  placeholder="Ex: Negociação especial com a coordenação..."
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <label className="flex items-center gap-2 text-xs text-slate-700 font-medium cursor-pointer">
+                  <input
+                    name="is_cortesia"
+                    type="checkbox"
+                    defaultChecked={Boolean(editingEnrollment.is_cortesia)}
+                    className="rounded text-purple-600"
+                  />
+                  <span>Matrícula cortesia / sem cobrança</span>
+                </label>
+                <select
+                  name="tipo_cortesia"
+                  defaultValue={editingEnrollment.tipo_cortesia || 'CONTRATO_QUITADO'}
+                  className="px-2.5 py-1 border rounded-lg text-xs bg-white"
+                >
+                  <option value="CONTRATO_QUITADO">Contrato quitado</option>
+                  <option value="BOLSA_100">Bolsa 100%</option>
+                  <option value="REPOSICAO">Reposição</option>
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -4377,6 +5326,127 @@ export default function App() {
         </div>
       )}
 
+      {/* MODAL: CRIAR / EDITAR PLANO OU TIPO DE DESCONTO */}
+      {showPlanModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">
+                {editingPlan ? `Editar ${editingPlan.nome}` : 'Novo Plano / Tipo de Desconto'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowPlanModal(false);
+                  setEditingPlan(null);
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form key={editingPlan ? `edit-plan-${editingPlan.id}` : 'new-plan'} onSubmit={handleSavePlan} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nome</label>
+                <input
+                  name="nome"
+                  required
+                  defaultValue={editingPlan?.nome || ''}
+                  placeholder="Ex: Fidelidade 6 meses, Desconto Ex-Aluno..."
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Categoria</label>
+                  <select
+                    name="tipo"
+                    defaultValue={editingPlan?.tipo || 'PLANO'}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="PLANO">Plano de Pagamento</option>
+                    <option value="DESCONTO">Desconto Adicional</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Condição (se Plano)</label>
+                  <select
+                    name="condicao_pagamento"
+                    defaultValue={editingPlan?.condicao_pagamento || 'PARCELADO'}
+                    className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                  >
+                    <option value="A_VISTA">À vista</option>
+                    <option value="MENSAL">Mensal</option>
+                    <option value="PARCELADO">Parcelado</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Percentual de Desconto (%)</label>
+                  <input
+                    name="percentual_desconto"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    required
+                    defaultValue={editingPlan?.percentual_desconto ?? 0}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Meses Mínimos (opcional)</label>
+                  <input
+                    name="meses_minimos"
+                    type="number"
+                    min="1"
+                    max="48"
+                    defaultValue={editingPlan?.meses_minimos || ''}
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Descrição</label>
+                <input
+                  name="descricao"
+                  defaultValue={editingPlan?.descricao || ''}
+                  placeholder="Regras de aplicação..."
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+              {editingPlan && (
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    name="ativo"
+                    type="checkbox"
+                    id="plan_active"
+                    defaultChecked={editingPlan.ativo}
+                    className="rounded text-amber-600"
+                  />
+                  <label htmlFor="plan_active" className="text-xs text-slate-700 font-medium">Política Ativa</label>
+                </div>
+              )}
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPlanModal(false);
+                    setEditingPlan(null);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">
+                  Salvar Política
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: BAIXA DE PAGAMENTO */}
       {showPayModal && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -4413,6 +5483,7 @@ export default function App() {
                   <option value="CARTAO">Cartão de Crédito / Débito</option>
                   <option value="BOLETO">Boleto Bancário</option>
                   <option value="DINHEIRO">Dinheiro (Presencial)</option>
+                  <option value="TRANSFERENCIA">Transferência Bancária (TED/DOC)</option>
                 </select>
               </div>
               <div>

@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timezone
 from typing import List, Optional, Dict
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
@@ -18,7 +19,9 @@ from app.schemas.financial import (
     InvoiceCreate, InvoiceUpdate, InvoiceResponse,
     PaymentCreate, PaymentResponse,
     ExpenseCreate, ExpenseResponse,
-    CashFlowSummary, DRESummary
+    CashFlowSummary, DRESummary,
+    DiscountsReportResponse, DiscountReportByTypeItem,
+    DiscountReportByMonthItem, DiscountManualAuditItem,
 )
 from app.routers.auth import get_current_active_user, require_roles
 from app.routers.enrollments import gerar_faturas_matricula
@@ -492,6 +495,141 @@ def get_dre(
         despesas_operacionais=round(total_despesas, 2),
         resultado_liquido=resultado_liquido,
         despesas_discriminadas=despesas_discriminadas
+    )
+
+
+@router.get("/discounts-report", response_model=DiscountsReportResponse, summary="Relatório de descontos concedidos por tipo e por mês")
+def get_discounts_report(
+    mes: Optional[int] = Query(None, ge=1, le=12),
+    ano: Optional[int] = Query(None, ge=2000, le=2100),
+    competencia_inicio: Optional[str] = Query(None, description="YYYY-MM"),
+    competencia_fim: Optional[str] = Query(None, description="YYYY-MM"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.FINANCEIRO.value, UserRole.COORDENACAO.value)),
+):
+    query = db.query(Invoice).options(
+        joinedload(Invoice.matricula).joinedload(Matricula.aluno),
+        joinedload(Invoice.matricula).joinedload(Matricula.turma),
+    ).filter(Invoice.status != StatusTitulo.CANCELADO.value)
+
+    if ano is not None and mes is not None:
+        query = query.filter(Invoice.competencia == f"{ano:04d}-{mes:02d}")
+    elif ano is not None:
+        query = query.filter(Invoice.competencia.like(f"{ano:04d}-%"))
+    elif mes is not None:
+        query = query.filter(Invoice.competencia.like(f"%-{mes:02d}"))
+    if competencia_inicio:
+        query = query.filter(Invoice.competencia >= competencia_inicio)
+    if competencia_fim:
+        query = query.filter(Invoice.competencia <= competencia_fim)
+
+    faturas = query.all()
+
+    total_descontos = 0.0
+    total_faturas_com_desconto = 0
+    por_tipo_map: Dict[str, Dict] = {}
+    por_mes_map: Dict[str, Dict] = {}
+    manual_mats: Dict[int, Matricula] = {}
+
+    for inv in faturas:
+        desc_val = round(float(inv.desconto_aplicado or 0.0), 2)
+        nom_val = round(float(inv.valor_nominal or 0.0), 2)
+        liq_val = round(float(inv.valor_final or 0.0), 2)
+
+        mes_entry = por_mes_map.setdefault(inv.competencia, {
+            "competencia": inv.competencia,
+            "quantidade_faturas": 0,
+            "total_bruto": 0.0,
+            "total_desconto": 0.0,
+            "total_liquido": 0.0,
+        })
+        mes_entry["total_bruto"] = round(mes_entry["total_bruto"] + nom_val, 2)
+        mes_entry["total_liquido"] = round(mes_entry["total_liquido"] + liq_val, 2)
+
+        mat = inv.matricula
+        if mat and mat.desconto_editado_manualmente:
+            manual_mats[mat.id] = mat
+
+        if desc_val <= 0.0:
+            continue
+
+        total_descontos = round(total_descontos + desc_val, 2)
+        total_faturas_com_desconto += 1
+        mes_entry["quantidade_faturas"] += 1
+        mes_entry["total_desconto"] = round(mes_entry["total_desconto"] + desc_val, 2)
+
+        # Determina rótulo(s) do tipo de desconto a partir do snapshot da matrícula
+        tipos_rotulos: List[str] = []
+        if mat:
+            if mat.descontos_aplicados_json:
+                try:
+                    itens = json.loads(mat.descontos_aplicados_json)
+                    for it in itens:
+                        if it.get("nome") and float(it.get("percentual") or 0.0) > 0:
+                            tipos_rotulos.append(it["nome"])
+                except Exception:
+                    pass
+            if not tipos_rotulos and mat.plano_nome and float(mat.desconto_plano_percentual or 0.0) > 0:
+                tipos_rotulos.append(mat.plano_nome)
+            if not tipos_rotulos and mat.tipo_desconto:
+                tipos_rotulos.append(mat.tipo_desconto.capitalize())
+            if float(mat.desconto_valor_fixo or 0.0) > 0 and "Desconto em R$" not in tipos_rotulos:
+                if not tipos_rotulos:
+                    tipos_rotulos.append("Desconto em R$")
+            if mat.desconto_editado_manualmente and not tipos_rotulos:
+                tipos_rotulos.append("Manual")
+        if not tipos_rotulos:
+            tipos_rotulos = ["Outros"]
+
+        tipo_chave = " + ".join(tipos_rotulos)
+        t_entry = por_tipo_map.setdefault(tipo_chave, {
+            "tipo": tipo_chave,
+            "quantidade_faturas": 0,
+            "matriculas_ids": set(),
+            "total_desconto": 0.0,
+        })
+        t_entry["quantidade_faturas"] += 1
+        if mat:
+            t_entry["matriculas_ids"].add(mat.id)
+        t_entry["total_desconto"] = round(t_entry["total_desconto"] + desc_val, 2)
+
+    por_tipo = [
+        DiscountReportByTypeItem(
+            tipo=v["tipo"],
+            quantidade_faturas=v["quantidade_faturas"],
+            quantidade_matriculas=len(v["matriculas_ids"]),
+            total_desconto=v["total_desconto"],
+        )
+        for v in sorted(por_tipo_map.values(), key=lambda x: x["total_desconto"], reverse=True)
+    ]
+
+    por_mes = [
+        DiscountReportByMonthItem(**v)
+        for v in sorted(por_mes_map.values(), key=lambda x: x["competencia"])
+        if v["total_desconto"] > 0 or v["quantidade_faturas"] > 0
+    ]
+
+    alteracoes_manuais = [
+        DiscountManualAuditItem(
+            matricula_id=m.id,
+            aluno_nome=m.aluno.nome if m.aluno else f"Aluno #{m.aluno_id}",
+            turma_nome=m.turma.nome if m.turma else f"Turma #{m.turma_id}",
+            plano_nome=m.plano_nome,
+            desconto_percentual=float(m.desconto_percentual or 0.0),
+            desconto_valor_fixo=float(m.desconto_valor_fixo or 0.0),
+            alterado_por=m.desconto_alterado_por_nome,
+            motivo=m.desconto_motivo_alteracao,
+            alterado_em=m.desconto_alterado_em,
+        )
+        for m in sorted(manual_mats.values(), key=lambda x: x.id, reverse=True)
+    ]
+
+    return DiscountsReportResponse(
+        total_descontos_concedidos=total_descontos,
+        total_faturas_com_desconto=total_faturas_com_desconto,
+        por_tipo=por_tipo,
+        por_mes=por_mes,
+        alteracoes_manuais=alteracoes_manuais,
     )
 
 

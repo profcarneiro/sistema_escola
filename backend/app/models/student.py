@@ -6,6 +6,11 @@ from sqlalchemy.orm import relationship
 from app.database import Base
 
 
+class TipoLiberacao(str, enum.Enum):
+    SOZINHO = "SOZINHO"
+    ACOMPANHANTE = "ACOMPANHANTE"
+
+
 class Aluno(Base):
     __tablename__ = "alunos"
 
@@ -18,10 +23,14 @@ class Aluno(Base):
     endereco = Column(String(255), nullable=True)
     foto_url = Column(String(255), nullable=True)
 
-    # Saúde e LGPD
+    # Saúde, Observações, Emergência, Liberação e LGPD
     alergias = Column(Text, nullable=True)
     medicacoes = Column(Text, nullable=True)
     observacoes_saude = Column(Text, nullable=True)
+    observacoes = Column(Text, nullable=True)
+    contatos_emergencia = Column(Text, nullable=True)
+    tipo_liberacao = Column(String(30), default=TipoLiberacao.ACOMPANHANTE.value, nullable=False)
+    acompanhantes_autorizados = Column(Text, nullable=True)
     autorizacao_imagem = Column(Boolean, default=False, nullable=False)
     autorizacao_imagem_data = Column(DateTime, nullable=True)
 

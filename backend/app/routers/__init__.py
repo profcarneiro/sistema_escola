@@ -12,6 +12,7 @@ from app.routers.financial import router as financial_router
 from app.routers.communication import router as communication_router
 from app.routers.reports import router as reports_router
 from app.routers.backup import router as backup_router
+from app.routers.discount_policies import router as discount_policies_router
 
 __all__ = [
     "auth_router",
@@ -28,6 +29,7 @@ __all__ = [
     "communication_router",
     "reports_router",
     "backup_router",
+    "discount_policies_router",
 ]
 
 

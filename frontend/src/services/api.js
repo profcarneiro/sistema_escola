@@ -178,6 +178,16 @@ export const api = {
   getDefaulters: () => request('/financial/defaulters'),
   getCashFlow: (inicio, fim) => request(`/financial/cash-flow?data_inicio=${inicio}&data_fim=${fim}`),
   getDRE: (inicio, fim, alunoId = null) => request(`/financial/dre?competencia_inicio=${inicio}&competencia_fim=${fim}${alunoId ? `&aluno_id=${alunoId}` : ''}`),
+  getDiscountsReport: (params = '') => request(`/financial/discounts-report${params ? `?${params}` : ''}`),
+
+  // Planos e Descontos
+  getDiscountPolicies: () => request('/discount-policies/'),
+  updateDiscountSettings: (data) => request('/discount-policies/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  createPaymentPlan: (data) => request('/discount-policies/plans', { method: 'POST', body: JSON.stringify(data) }),
+  updatePaymentPlan: (id, data) => request(`/discount-policies/plans/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deletePaymentPlan: (id) => request(`/discount-policies/plans/${id}`, { method: 'DELETE' }),
+  upsertCourseDiscountRule: (data) => request('/discount-policies/course-rules', { method: 'PUT', body: JSON.stringify(data) }),
+  simulateDiscountPolicy: (data) => request('/discount-policies/simulate', { method: 'POST', body: JSON.stringify(data) }),
 
   // WhatsApp
   getInvoiceReminderLink: (invoiceId) => request(`/communication/whatsapp-invoice-reminder/${invoiceId}`, { method: 'POST' }),

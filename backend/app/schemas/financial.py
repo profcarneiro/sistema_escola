@@ -10,7 +10,7 @@ FORMAS_PAGAMENTO_VALIDAS = [f.value for f in FormaPagamento]
 
 class PaymentCreate(BaseModel):
     valor_pago: float = Field(..., gt=0.0, description="Valor efetivamente pago")
-    forma_pagamento: FormaPagamento = Field(..., description="Forma de pagamento: PIX, CARTAO, BOLETO, DINHEIRO")
+    forma_pagamento: FormaPagamento = Field(..., description="Forma de pagamento: PIX, CARTAO, BOLETO, DINHEIRO, TRANSFERENCIA")
     comprovante_transacao: Optional[str] = Field(None, max_length=100, description="Código de autorização, NSU ou comprovante")
     observacoes: Optional[str] = Field(None, max_length=255)
 
@@ -111,3 +111,38 @@ class DRESummary(BaseModel):
     despesas_operacionais: float
     resultado_liquido: float
     despesas_discriminadas: Dict[str, float]
+
+
+class DiscountReportByTypeItem(BaseModel):
+    tipo: str
+    quantidade_faturas: int
+    quantidade_matriculas: int
+    total_desconto: float
+
+
+class DiscountReportByMonthItem(BaseModel):
+    competencia: str
+    quantidade_faturas: int
+    total_bruto: float
+    total_desconto: float
+    total_liquido: float
+
+
+class DiscountManualAuditItem(BaseModel):
+    matricula_id: int
+    aluno_nome: str
+    turma_nome: str
+    plano_nome: Optional[str] = None
+    desconto_percentual: float
+    desconto_valor_fixo: float
+    alterado_por: Optional[str] = None
+    motivo: Optional[str] = None
+    alterado_em: Optional[datetime] = None
+
+
+class DiscountsReportResponse(BaseModel):
+    total_descontos_concedidos: float
+    total_faturas_com_desconto: int
+    por_tipo: List[DiscountReportByTypeItem]
+    por_mes: List[DiscountReportByMonthItem]
+    alteracoes_manuais: List[DiscountManualAuditItem]

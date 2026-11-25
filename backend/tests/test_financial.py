@@ -334,3 +334,29 @@ def deve_garantir_dre_com_receita_liquida_menor_ou_igual_a_bruta_com_juros(
     dre = resp.json()
     assert dre["receita_bruta"] >= dre["receita_liquida"]
     assert dre["receita_liquida"] == round(dre["receita_bruta"] - dre["deducoes_descontos"], 2)
+
+
+def deve_aceitar_pagamento_via_transferencia(client, admin_token, ambiente_fase5):
+    fat = client.post(
+        "/api/v1/financial/invoices",
+        json={
+            "matricula_id": ambiente_fase5["matricula"].id,
+            "aluno_id": ambiente_fase5["aluno"].id,
+            "descricao": "Mensalidade 11/2026 - Transferência",
+            "competencia": "2026-11",
+            "valor_nominal": 260.0,
+            "desconto_aplicado": 0.0,
+            "data_vencimento": "2026-11-10"
+        },
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    inv_id = fat.json()["id"]
+
+    resp = client.post(
+        f"/api/v1/financial/invoices/{inv_id}/pay",
+        json={"valor_pago": 260.0, "forma_pagamento": "TRANSFERENCIA", "comprovante_transacao": "TED-445566"},
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "PAGO"
+    assert resp.json()["forma_pagamento"] == "TRANSFERENCIA"

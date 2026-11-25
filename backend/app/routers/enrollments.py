@@ -1,3 +1,4 @@
+import json
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 import uuid
@@ -14,18 +15,32 @@ from app.models.waitlist import ListaEspera
 from app.models.student import Aluno
 from app.models.class_group import ClassGroup
 from app.models.course import Course
+from app.models.discount_policy import CondicaoPagamento
 from app.models.user import User, UserRole
 from app.schemas.enrollment import (
     MatriculaCreate, MatriculaUpdate, MatriculaResponse,
     ListaEsperaCreate, ListaEsperaResponse
 )
 from app.routers.auth import get_current_active_user, require_roles
+from app.services.discount_policy import simular_politica_desconto
 
 router = APIRouter(prefix="/enrollments", tags=["Matrículas e Lista de Espera"])
 
 
+def _split_amount(total: float, count: int) -> List[float]:
+    """Divide um valor monetário em N parcelas exatas sem perda de centavos."""
+    if count <= 0:
+        return []
+    total_cents = round(float(total or 0.0) * 100)
+    base, rem = divmod(total_cents, count)
+    return [
+        round((base + (rem if i == count - 1 else 0)) / 100.0, 2)
+        for i in range(count)
+    ]
+
+
 def contar_matriculas_ativas(db: Session, turma_id: int) -> int:
-    """Conta alunos matriculados e ativos (excluindo experimentais cancelados) em uma turma."""
+    """Conta alunos matriculados e ativos em uma turma."""
     return db.query(Matricula).filter(
         Matricula.turma_id == turma_id,
         Matricula.status.in_([StatusMatricula.ATIVA.value, StatusMatricula.EXPERIMENTAL.value])
@@ -61,11 +76,10 @@ def sincronizar_faturas_matricula(
     turma: Optional[ClassGroup] = None
 ) -> Dict[str, Any]:
     """
-    Sincroniza todas as faturas da matrícula no Financeiro:
-    - Matrícula CANCELADA ou EXPERIMENTAL: cancela parcelas ainda em aberto (PENDENTE/ATRASADO), mantendo as PAGO.
-    - Matrícula TRANCADA: cancela parcelas futuras (PENDENTE), preservando PAGO e ATRASADO.
-    - Matrícula ATIVA (não experimental): ajusta quantidade de parcelas (cancela excedentes em aberto e gera faltantes)
-      e atualiza valores/vencimentos das parcelas ainda em aberto conforme os dados vigentes da matrícula.
+    Sincroniza todas as faturas da matrícula no Financeiro conforme duração e condição de pagamento:
+    - Matrícula CANCELADA, EXPERIMENTAL ou CORTESIA: cancela parcelas em aberto, preservando PAGO.
+    - Matrícula TRANCADA: cancela parcelas futuras (PENDENTE).
+    - Matrícula ATIVA: gera/atualiza cobranças para A_VISTA (1x), PARCELADO (1x..12x) ou MENSAL (N meses).
     """
     faturas_nao_canceladas = db.query(Invoice).filter(
         Invoice.matricula_id == matricula.id,
@@ -81,6 +95,13 @@ def sincronizar_faturas_matricula(
         canceladas = _cancelar_faturas_abertas(faturas_nao_canceladas, "Matrícula convertida para aula experimental")
         return {"geradas": [], "atualizadas": 0, "canceladas": canceladas}
 
+    if getattr(matricula, "is_cortesia", False):
+        canceladas = _cancelar_faturas_abertas(
+            faturas_nao_canceladas,
+            f"Matrícula cortesia ({matricula.tipo_cortesia or 'sem cobrança'})"
+        )
+        return {"geradas": [], "atualizadas": 0, "canceladas": canceladas}
+
     if matricula.status == StatusMatricula.TRANCADA.value:
         canceladas = _cancelar_faturas_abertas(
             [inv for inv in faturas_nao_canceladas if inv.status == StatusTitulo.PENDENTE.value],
@@ -91,7 +112,15 @@ def sincronizar_faturas_matricula(
     if matricula.status != StatusMatricula.ATIVA.value:
         return {"geradas": [], "atualizadas": 0, "canceladas": 0}
 
-    quantidade_parcelas = matricula.quantidade_parcelas if matricula.quantidade_parcelas is not None else 12
+    condicao = getattr(matricula, "condicao_pagamento", None) or CondicaoPagamento.MENSAL.value
+    duracao_meses = max(1, int(getattr(matricula, "duracao_contrato_meses", None) or matricula.quantidade_parcelas or 12))
+    if condicao == CondicaoPagamento.A_VISTA.value:
+        quantidade_cobrancas = 1
+    elif condicao == CondicaoPagamento.PARCELADO.value:
+        quantidade_cobrancas = min(12, max(1, int(matricula.quantidade_parcelas or 1)))
+    else:
+        quantidade_cobrancas = duracao_meses
+
     dia_vencimento = matricula.dia_vencimento or 10
 
     if aluno is None:
@@ -99,21 +128,70 @@ def sincronizar_faturas_matricula(
     if turma is None:
         turma = db.query(ClassGroup).filter(ClassGroup.id == matricula.turma_id).first()
 
-    # Monta a grade alvo de competências e vencimentos para as N parcelas da matrícula
+    curso_nome = None
+    if getattr(matricula, "curso_id", None):
+        if getattr(matricula, "curso", None):
+            curso_nome = matricula.curso.nome
+        else:
+            curso_obj = db.query(Course).filter(Course.id == matricula.curso_id).first()
+            curso_nome = curso_obj.nome if curso_obj else None
+
+    turma_nome = turma.nome if turma else f"Turma #{matricula.turma_id}"
+    label_servico = curso_nome or turma_nome
+
+    valor_mensal = round(float(matricula.valor_mensalidade or 0.0), 2)
+    valor_total_bruto = round(
+        float(matricula.valor_total_contrato)
+        if getattr(matricula, "valor_total_contrato", None) is not None
+        else (valor_mensal * duracao_meses),
+        2
+    )
+    desconto_pct = float(matricula.desconto_percentual or 0.0)
+    desconto_fixo = max(0.0, float(getattr(matricula, "desconto_valor_fixo", 0.0) or 0.0))
+    desconto_total = min(
+        valor_total_bruto,
+        round(round(valor_total_bruto * (desconto_pct / 100.0), 2) + desconto_fixo, 2)
+    )
+
+    nominais_por_slot = _split_amount(valor_total_bruto, quantidade_cobrancas)
+    descontos_por_slot = _split_amount(desconto_total, quantidade_cobrancas)
+
+    if desconto_pct > 0 and desconto_fixo > 0:
+        desc_sufixo = f" (desconto {desconto_pct:g}% + R$ {desconto_fixo:.2f})"
+    elif desconto_pct > 0:
+        desc_sufixo = f" (desconto {desconto_pct:g}%)"
+    elif desconto_fixo > 0:
+        desc_sufixo = f" (desconto R$ {desconto_fixo:.2f})"
+    else:
+        desc_sufixo = ""
+
     slots = []
     ano_cursor = matricula.data_inicio.year
     mes_cursor = matricula.data_inicio.month
-    for i in range(max(0, quantidade_parcelas)):
+    for i in range(quantidade_cobrancas):
         max_dias = calendar.monthrange(ano_cursor, mes_cursor)[1]
         dia_efetivo = min(dia_vencimento, max_dias)
         data_venc = date(ano_cursor, mes_cursor, dia_efetivo)
         competencia = f"{ano_cursor:04d}-{mes_cursor:02d}"
+        nom_slot = nominais_por_slot[i]
+        desc_slot = min(nom_slot, descontos_por_slot[i])
+        final_slot = round(max(0.0, nom_slot - desc_slot), 2)
+
+        if condicao == CondicaoPagamento.A_VISTA.value:
+            descricao_slot = f"À vista - {label_servico}{desc_sufixo}"[:200]
+        elif condicao == CondicaoPagamento.PARCELADO.value:
+            descricao_slot = f"Parcela {i + 1}/{quantidade_cobrancas} - {label_servico} (parcelado){desc_sufixo}"[:200]
+        else:
+            descricao_slot = f"Mensalidade {i + 1}/{quantidade_cobrancas} ({mes_cursor:02d}/{ano_cursor}) - {label_servico} (mensal){desc_sufixo}"[:200]
+
         slots.append({
             "indice": i + 1,
-            "mes": mes_cursor,
-            "ano": ano_cursor,
             "competencia": competencia,
             "data_vencimento": data_venc,
+            "valor_nominal": nom_slot,
+            "desconto_aplicado": desc_slot,
+            "valor_final": final_slot,
+            "descricao": descricao_slot,
         })
         mes_cursor += 1
         if mes_cursor > 12:
@@ -122,7 +200,6 @@ def sincronizar_faturas_matricula(
 
     target_competencias = {slot["competencia"] for slot in slots}
 
-    # Agrupa faturas existentes por competência e cancela excedentes fora da nova quantidade_parcelas
     faturas_por_competencia: Dict[str, List[Invoice]] = {}
     faturas_fora_da_grade: List[Invoice] = []
     for inv in faturas_nao_canceladas:
@@ -133,17 +210,11 @@ def sincronizar_faturas_matricula(
 
     canceladas = _cancelar_faturas_abertas(
         faturas_fora_da_grade,
-        f"Ajuste de parcelas da matrícula ({quantidade_parcelas}x)"
+        f"Ajuste de cobranças da matrícula ({quantidade_cobrancas}x)"
     )
 
     hoje = date.today()
-    valor_nominal = round(float(matricula.valor_mensalidade or 0.0), 2)
-    desconto_pct = float(matricula.desconto_percentual or 0.0)
-    desconto_val = round(valor_nominal * (desconto_pct / 100), 2)
-    valor_final = round(max(0.0, valor_nominal - desconto_val), 2)
     resp_id = aluno.responsavel.id if aluno and aluno.responsavel else None
-    turma_nome = turma.nome if turma else f"Turma #{matricula.turma_id}"
-
     novas_faturas: List[Invoice] = []
     atualizadas = 0
 
@@ -151,11 +222,13 @@ def sincronizar_faturas_matricula(
         competencia = slot["competencia"]
         data_venc = slot["data_vencimento"]
         status_esperado = StatusTitulo.ATRASADO.value if data_venc < hoje else StatusTitulo.PENDENTE.value
-        desc = f"Mensalidade {slot['indice']}/{quantidade_parcelas} ({slot['mes']:02d}/{slot['ano']}) - {turma_nome}"[:200]
+        desc = slot["descricao"]
+        valor_nominal = slot["valor_nominal"]
+        desconto_val = slot["desconto_aplicado"]
+        valor_final = slot["valor_final"]
 
         existentes = faturas_por_competencia.get(competencia, [])
         if existentes:
-            # Prioriza fatura já paga caso haja duplicidade na mesma competência
             existentes.sort(key=lambda f: (0 if f.status == StatusTitulo.PAGO.value else 1, f.id))
             principal = existentes[0]
             if len(existentes) > 1:
@@ -220,10 +293,29 @@ def formatar_matricula_response(matricula: Matricula, total_parcelas: int = 0) -
         resp.curso_nome = matricula.curso.nome
     elif matricula.turma and matricula.turma.curso:
         resp.curso_nome = matricula.turma.curso.nome
-    if matricula.desconto_percentual and matricula.valor_mensalidade:
-        resp.valor_com_desconto = round(
-            matricula.valor_mensalidade * (1 - matricula.desconto_percentual / 100), 2
-        )
+
+    if matricula.descontos_aplicados_json:
+        try:
+            itens = json.loads(matricula.descontos_aplicados_json)
+            resp.descontos_aplicados = itens
+            resp.descontos_ids = [int(it["id"]) for it in itens if it.get("id") and it.get("tipo") == "DESCONTO"]
+        except Exception:
+            resp.descontos_aplicados = []
+
+    duracao = max(1, int(matricula.duracao_contrato_meses or matricula.quantidade_parcelas or 12))
+    bruto_total = float(matricula.valor_total_contrato) if matricula.valor_total_contrato is not None else round(float(matricula.valor_mensalidade or 0.0) * duracao, 2)
+    resp.valor_total_contrato = round(bruto_total, 2)
+
+    if matricula.valor_mensalidade is not None:
+        desc_pct = float(matricula.desconto_percentual or 0.0)
+        desc_fixo = float(getattr(matricula, "desconto_valor_fixo", 0.0) or 0.0)
+        liquido_total = max(0.0, bruto_total - round(bruto_total * (desc_pct / 100.0), 2) - desc_fixo)
+        qtd_cobr = max(1, int(matricula.quantidade_parcelas or duracao))
+        if (matricula.condicao_pagamento or "MENSAL") == CondicaoPagamento.MENSAL.value and desc_fixo == 0.0:
+            resp.valor_com_desconto = round(matricula.valor_mensalidade * (1 - desc_pct / 100.0), 2)
+        else:
+            resp.valor_com_desconto = round(liquido_total / qtd_cobr, 2)
+
     resp.total_parcelas_geradas = total_parcelas
     return resp
 
@@ -274,21 +366,17 @@ def create_enrollment(
     ))
 ):
     """
-    Realiza a matrícula de um aluno. Regras aplicadas:
-    - Turma deve ter vagas conforme sua capacidade configurada
-    - Aluno não pode estar já matriculado e ativo na mesma turma
-    - Matrícula cria número de contrato único (renovação NÃO é automática)
+    Realiza a matrícula de um aluno aplicando a política de duração do contrato, condição de pagamento,
+    planos/descontos (com teto e auditoria de alteração manual) ou modo cortesia sem cobrança.
     """
     client_ip = request.client.host if request.client else None
 
-    # 1. Valida existência do aluno
     aluno = db.query(Aluno).options(joinedload(Aluno.responsavel)).filter(
         Aluno.id == mat_in.aluno_id, Aluno.ativo.is_(True)
     ).first()
     if not aluno:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno ativo não encontrado.")
 
-    # 2. Valida existência e atividade da turma
     turma = db.query(ClassGroup).options(joinedload(ClassGroup.cursos)).filter(
         ClassGroup.id == mat_in.turma_id, ClassGroup.ativa.is_(True)
     ).first()
@@ -310,7 +398,6 @@ def create_enrollment(
     elif turma.curso_id is not None:
         curso_id_efetivo = turma.curso_id
 
-    # 3. Verifica se aluno já está matriculado na turma
     matricula_existente = db.query(Matricula).filter(
         Matricula.aluno_id == mat_in.aluno_id,
         Matricula.turma_id == mat_in.turma_id,
@@ -322,7 +409,6 @@ def create_enrollment(
             detail="Este aluno já possui matrícula ativa nesta turma."
         )
 
-    # 4. Verifica capacidade configurada da turma
     vagas_ocupadas = contar_matriculas_ativas(db, mat_in.turma_id)
     if vagas_ocupadas >= turma.capacidade_maxima:
         raise HTTPException(
@@ -334,14 +420,49 @@ def create_enrollment(
             )
         )
 
-    # 5. Gera número de contrato único
+    duracao_meses = max(1, int(mat_in.duracao_contrato_meses or mat_in.quantidade_parcelas or 12))
+    condicao = mat_in.condicao_pagamento.value
+    if condicao == CondicaoPagamento.A_VISTA.value:
+        qtd_parcelas = 1
+    elif condicao == CondicaoPagamento.PARCELADO.value:
+        qtd_parcelas = min(12, max(1, int(mat_in.quantidade_parcelas or 1)))
+    else:
+        qtd_parcelas = duracao_meses
+
+    sim = simular_politica_desconto(
+        db=db,
+        curso_id=curso_id_efetivo,
+        valor_mensalidade=mat_in.valor_mensalidade,
+        duracao_contrato_meses=duracao_meses,
+        condicao_pagamento=condicao,
+        quantidade_parcelas=qtd_parcelas,
+        plano_id=mat_in.plano_id,
+        descontos_ids=mat_in.descontos_ids or [],
+        desconto_valor_fixo=mat_in.desconto_valor_fixo or 0.0,
+    )
+
+    pct_politica = sim["percentual_aplicado"]
+    pct_final = float(mat_in.desconto_percentual) if mat_in.desconto_percentual is not None else pct_politica
+    fixo_final = round(float(mat_in.desconto_valor_fixo or 0.0), 2)
+
+    editado_manual = bool(mat_in.desconto_editado_manualmente) or (
+        mat_in.desconto_percentual is not None and abs(pct_final - pct_politica) > 0.001
+    )
+    if fixo_final > 0 and mat_in.desconto_editado_manualmente is not False:
+        editado_manual = True
+
     numero_contrato = f"MAT-{date.today().strftime('%Y%m')}-{str(uuid.uuid4())[:8].upper()}"
-
     status_inicial = StatusMatricula.EXPERIMENTAL.value if mat_in.aula_experimental else StatusMatricula.ATIVA.value
-
     dia_vencimento = mat_in.dia_vencimento or 10
-    quantidade_parcelas = mat_in.quantidade_parcelas if mat_in.quantidade_parcelas is not None else 12
 
+    tipo_desc = mat_in.tipo_desconto
+    if not tipo_desc and sim["itens_aplicados"]:
+        if len(sim["itens_aplicados"]) > 1:
+            tipo_desc = "combinado"
+        elif sim["itens_aplicados"][0].get("tipo") == "PLANO":
+            tipo_desc = "plano"
+
+    agora = datetime.now(timezone.utc)
     nova_matricula = Matricula(
         aluno_id=mat_in.aluno_id,
         turma_id=mat_in.turma_id,
@@ -350,20 +471,36 @@ def create_enrollment(
         data_matricula=mat_in.data_matricula,
         data_inicio=mat_in.data_inicio,
         data_termino_previsto=mat_in.data_termino_previsto,
+        data_saida=mat_in.data_saida,
         numero_contrato=numero_contrato,
-        contrato_assinado=False,  # sempre inicia pendente de assinatura
+        contrato_assinado=False,
         valor_mensalidade=mat_in.valor_mensalidade,
-        desconto_percentual=mat_in.desconto_percentual,
-        tipo_desconto=mat_in.tipo_desconto,
+        duracao_contrato_meses=duracao_meses,
+        valor_total_contrato=sim["valor_total_bruto"],
+        condicao_pagamento=condicao,
+        plano_id=mat_in.plano_id,
+        plano_nome=sim["plano_nome"],
+        desconto_percentual=pct_final,
+        desconto_valor_fixo=fixo_final,
+        desconto_plano_percentual=sim["desconto_plano_percentual"],
+        desconto_adicional_percentual=sim["desconto_adicional_percentual"],
+        descontos_aplicados_json=json.dumps(sim["itens_aplicados"], ensure_ascii=False) if sim["itens_aplicados"] else None,
+        tipo_desconto=tipo_desc,
+        desconto_editado_manualmente=editado_manual,
+        desconto_alterado_por_id=current_user.id if editado_manual else None,
+        desconto_alterado_por_nome=current_user.nome if editado_manual else None,
+        desconto_motivo_alteracao=mat_in.desconto_motivo_alteracao if editado_manual else None,
+        desconto_alterado_em=agora if editado_manual else None,
         dia_vencimento=dia_vencimento,
-        quantidade_parcelas=quantidade_parcelas,
+        quantidade_parcelas=qtd_parcelas,
         aula_experimental=mat_in.aula_experimental,
+        is_cortesia=mat_in.is_cortesia,
+        tipo_cortesia=mat_in.tipo_cortesia.value if mat_in.tipo_cortesia else None,
         observacoes=mat_in.observacoes
     )
     db.add(nova_matricula)
     db.flush()
 
-    # Gerar todas as faturas/mensalidades se não for aula experimental
     faturas_geradas = gerar_faturas_matricula(db, nova_matricula, aluno=aluno, turma=turma)
 
     db.commit()
@@ -378,9 +515,14 @@ def create_enrollment(
             "aluno": aluno.nome,
             "turma": turma.nome,
             "contrato": numero_contrato,
+            "duracao_meses": duracao_meses,
+            "condicao_pagamento": condicao,
             "experimental": mat_in.aula_experimental,
-            "desconto": mat_in.desconto_percentual,
-            "tipo_desconto": mat_in.tipo_desconto,
+            "cortesia": mat_in.is_cortesia,
+            "tipo_cortesia": nova_matricula.tipo_cortesia,
+            "desconto_percentual": pct_final,
+            "desconto_valor_fixo": fixo_final,
+            "desconto_manual": editado_manual,
             "parcelas_geradas": len(faturas_geradas)
         },
         usuario=current_user,
@@ -396,14 +538,16 @@ def get_enrollment(
     current_user: User = Depends(get_current_active_user)
 ):
     matricula = db.query(Matricula).options(
-        joinedload(Matricula.aluno), joinedload(Matricula.turma)
+        joinedload(Matricula.aluno),
+        joinedload(Matricula.turma).joinedload(ClassGroup.curso),
+        joinedload(Matricula.curso),
     ).filter(Matricula.id == matricula_id).first()
     if not matricula:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matrícula não encontrada.")
     return formatar_matricula_response(matricula, total_parcelas=contar_parcelas_matricula(db, matricula.id))
 
 
-@router.put("/{matricula_id}", response_model=MatriculaResponse, summary="Atualizar matrícula (status, contrato, descontos)")
+@router.put("/{matricula_id}", response_model=MatriculaResponse, summary="Atualizar matrícula (status, contrato, datas, descontos)")
 def update_enrollment(
     matricula_id: int,
     mat_update: MatriculaUpdate,
@@ -413,22 +557,16 @@ def update_enrollment(
         UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value, UserRole.FINANCEIRO.value
     ))
 ):
-    """
-    Atualiza a matrícula.
-    - Renovação: precisa ser feita manualmente com novo contrato assinado (NÃO automática).
-    - Cancelamento/Trancamento: registra motivo e multa conforme contrato.
-    - Se a matrícula passar para ATIVA (não experimental), gera automaticamente as parcelas faltantes.
-    """
     client_ip = request.client.host if request.client else None
     matricula = db.query(Matricula).options(
         joinedload(Matricula.aluno).joinedload(Aluno.responsavel),
-        joinedload(Matricula.turma)
+        joinedload(Matricula.turma).joinedload(ClassGroup.cursos),
+        joinedload(Matricula.curso),
     ).filter(Matricula.id == matricula_id).first()
     if not matricula:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matrícula não encontrada.")
 
     if mat_update.status is not None:
-        # Validação do fluxo de status
         if mat_update.status == StatusMatricula.CANCELADA:
             if not mat_update.motivo_cancelamento:
                 raise HTTPException(
@@ -438,14 +576,27 @@ def update_enrollment(
             matricula.motivo_cancelamento = mat_update.motivo_cancelamento
             matricula.data_cancelamento = datetime.now(timezone.utc)
             matricula.multa_cancelamento = mat_update.multa_cancelamento or 0.0
+            if mat_update.data_saida is None and matricula.data_saida is None:
+                matricula.data_saida = date.today()
         matricula.status = mat_update.status.value
         if mat_update.status == StatusMatricula.ATIVA and mat_update.aula_experimental is None:
             matricula.aula_experimental = False
         elif mat_update.status == StatusMatricula.EXPERIMENTAL and mat_update.aula_experimental is None:
             matricula.aula_experimental = True
 
+    if mat_update.data_termino_previsto is not None:
+        matricula.data_termino_previsto = mat_update.data_termino_previsto
+    if mat_update.data_saida is not None:
+        matricula.data_saida = mat_update.data_saida
+
     if mat_update.aula_experimental is not None:
         matricula.aula_experimental = mat_update.aula_experimental
+    if mat_update.is_cortesia is not None:
+        matricula.is_cortesia = mat_update.is_cortesia
+        if not mat_update.is_cortesia:
+            matricula.tipo_cortesia = None
+    if mat_update.tipo_cortesia is not None:
+        matricula.tipo_cortesia = mat_update.tipo_cortesia.value
 
     if mat_update.contrato_assinado is not None:
         matricula.contrato_assinado = mat_update.contrato_assinado
@@ -467,12 +618,44 @@ def update_enrollment(
 
     if mat_update.valor_mensalidade is not None:
         matricula.valor_mensalidade = mat_update.valor_mensalidade
+    if mat_update.duracao_contrato_meses is not None:
+        matricula.duracao_contrato_meses = mat_update.duracao_contrato_meses
+    if mat_update.condicao_pagamento is not None:
+        matricula.condicao_pagamento = mat_update.condicao_pagamento.value
     if mat_update.dia_vencimento is not None:
         matricula.dia_vencimento = mat_update.dia_vencimento
     if mat_update.quantidade_parcelas is not None:
         matricula.quantidade_parcelas = mat_update.quantidade_parcelas
-    if mat_update.desconto_percentual is not None:
+        if mat_update.duracao_contrato_meses is None and matricula.condicao_pagamento == CondicaoPagamento.MENSAL.value:
+            matricula.duracao_contrato_meses = mat_update.quantidade_parcelas
+
+    if matricula.condicao_pagamento == CondicaoPagamento.A_VISTA.value:
+        matricula.quantidade_parcelas = 1
+    elif matricula.condicao_pagamento == CondicaoPagamento.MENSAL.value:
+        matricula.quantidade_parcelas = matricula.duracao_contrato_meses
+    matricula.valor_total_contrato = round(
+        float(matricula.valor_mensalidade or 0.0) * max(1, int(matricula.duracao_contrato_meses or 12)),
+        2
+    )
+
+    desconto_alterado = False
+    if mat_update.desconto_percentual is not None and abs(mat_update.desconto_percentual - float(matricula.desconto_percentual or 0.0)) > 0.001:
         matricula.desconto_percentual = mat_update.desconto_percentual
+        desconto_alterado = True
+    if mat_update.desconto_valor_fixo is not None and abs(mat_update.desconto_valor_fixo - float(matricula.desconto_valor_fixo or 0.0)) > 0.001:
+        matricula.desconto_valor_fixo = mat_update.desconto_valor_fixo
+        desconto_alterado = True
+
+    if desconto_alterado or mat_update.desconto_editado_manualmente:
+        matricula.desconto_editado_manualmente = True
+        matricula.desconto_alterado_por_id = current_user.id
+        matricula.desconto_alterado_por_nome = current_user.nome
+        matricula.desconto_alterado_em = datetime.now(timezone.utc)
+        if mat_update.desconto_motivo_alteracao is not None:
+            matricula.desconto_motivo_alteracao = mat_update.desconto_motivo_alteracao
+    elif mat_update.desconto_motivo_alteracao is not None:
+        matricula.desconto_motivo_alteracao = mat_update.desconto_motivo_alteracao
+
     if mat_update.tipo_desconto is not None:
         matricula.tipo_desconto = mat_update.tipo_desconto
     if mat_update.observacoes is not None:
@@ -494,6 +677,7 @@ def update_enrollment(
         detalhes={
             "status": matricula.status,
             "contrato_assinado": matricula.contrato_assinado,
+            "data_saida": str(matricula.data_saida) if matricula.data_saida else None,
             "parcelas_geradas": len(sync_result["geradas"]),
             "parcelas_atualizadas": sync_result["atualizadas"],
             "parcelas_canceladas": sync_result["canceladas"]
@@ -517,10 +701,6 @@ def delete_enrollment(
         UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value, UserRole.FINANCEIRO.value
     ))
 ):
-    """
-    Exclui uma matrícula que não possua mensalidades pagas, removendo parcelas em aberto/canceladas
-    e liberando a vaga na turma. Caso existam faturas pagas, preserva o histórico bloqueando a exclusão.
-    """
     matricula = db.query(Matricula).options(
         joinedload(Matricula.aluno),
         joinedload(Matricula.turma)
@@ -576,11 +756,11 @@ def generate_enrollment_invoices(
         UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value, UserRole.FINANCEIRO.value
     ))
 ):
-    """Gera mensalidades/parcelas pendentes para uma matrícula ativa que ainda não possua todas as parcelas."""
     client_ip = request.client.host if request.client else None
     matricula = db.query(Matricula).options(
         joinedload(Matricula.aluno).joinedload(Aluno.responsavel),
-        joinedload(Matricula.turma)
+        joinedload(Matricula.turma),
+        joinedload(Matricula.curso),
     ).filter(Matricula.id == matricula_id).first()
     if not matricula:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matrícula não encontrada.")
@@ -595,6 +775,12 @@ def generate_enrollment_invoices(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Matrícula experimental não gera cobrança financeira. Edite o status para ATIVA antes de gerar parcelas."
+        )
+
+    if getattr(matricula, "is_cortesia", False):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Matrícula cortesia / sem cobrança não gera faturas no Financeiro."
         )
 
     novas = gerar_faturas_matricula(db, matricula, aluno=matricula.aluno, turma=matricula.turma)
@@ -648,7 +834,6 @@ def add_to_waitlist(
     if not turma:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turma ativa não encontrada.")
 
-    # Verifica se aluno já está na lista de espera desta turma
     ja_na_fila = db.query(ListaEspera).filter(
         ListaEspera.aluno_id == espera_in.aluno_id,
         ListaEspera.turma_id == espera_in.turma_id,
@@ -660,7 +845,6 @@ def add_to_waitlist(
             detail=f"Aluno já está na lista de espera da turma '{turma.nome}' (posição {ja_na_fila.posicao})."
         )
 
-    # Determina próxima posição na fila
     ultima_posicao = db.query(ListaEspera).filter(
         ListaEspera.turma_id == espera_in.turma_id,
         ListaEspera.ativa.is_(True)

@@ -251,3 +251,38 @@ def deve_preservar_data_nascimento_exata_e_excluir_ou_desativar_aluno(client, ad
     get_vinc = client.get(f"/api/v1/students/{aluno_vinc_id}", headers={"Authorization": f"Bearer {admin_token}"})
     assert get_vinc.status_code == 200
     assert get_vinc.json()["ativo"] is False
+
+
+def deve_salvar_observacoes_emergencia_e_liberacao_do_aluno(client, admin_token):
+    cria = client.post(
+        "/api/v1/students/",
+        json={
+            "nome": "Aluno Liberado Sozinho",
+            "data_nascimento": "2002-07-15",
+            "alergias": "Poeira",
+            "observacoes": "Prefere aulas no turno da tarde",
+            "contatos_emergencia": "Ana (Mãe) - (19) 99999-1111",
+            "tipo_liberacao": "SOZINHO",
+            "acompanhantes_autorizados": "Ana, Pedro",
+            "autorizacao_imagem": True,
+        },
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert cria.status_code == 201
+    data = cria.json()
+    assert data["observacoes"] == "Prefere aulas no turno da tarde"
+    assert data["contatos_emergencia"] == "Ana (Mãe) - (19) 99999-1111"
+    assert data["tipo_liberacao"] == "SOZINHO"
+    assert data["acompanhantes_autorizados"] == "Ana, Pedro"
+
+    upd = client.put(
+        f"/api/v1/students/{data['id']}",
+        json={
+            "tipo_liberacao": "ACOMPANHANTE",
+            "observacoes": "Observação atualizada",
+        },
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert upd.status_code == 200
+    assert upd.json()["tipo_liberacao"] == "ACOMPANHANTE"
+    assert upd.json()["observacoes"] == "Observação atualizada"
