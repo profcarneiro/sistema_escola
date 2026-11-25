@@ -4,7 +4,7 @@ from app.models.lgpd import LGPDConsent, TermoTipo
 from app.models.room import Room
 from app.models.course import Course
 from app.models.teacher import Teacher
-from app.models.class_group import ClassGroup, FaixaEtaria, DiaSemana, Turno
+from app.models.class_group import ClassGroup, class_group_courses, FaixaEtaria, DiaSemana, Turno
 from app.models.student import Aluno
 from app.models.guardian import Responsavel
 from app.models.enrollment import Matricula, StatusMatricula
@@ -36,6 +36,7 @@ __all__ = [
     "Course",
     "Teacher",
     "ClassGroup",
+    "class_group_courses",
     "FaixaEtaria",
     "DiaSemana",
     "Turno",

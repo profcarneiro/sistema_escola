@@ -116,6 +116,8 @@ export const api = {
 
   // Salas & Cursos
   getRooms: () => request('/rooms/'),
+  createRoom: (data) => request('/rooms/', { method: 'POST', body: JSON.stringify(data) }),
+  updateRoom: (id, data) => request(`/rooms/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   getCourses: () => request('/courses/'),
   createCourse: (data) => request('/courses/', { method: 'POST', body: JSON.stringify(data) }),
   updateCourse: (id, data) => request(`/courses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -130,6 +132,8 @@ export const api = {
   // Turmas
   getClasses: () => request('/classes/'),
   createClass: (data) => request('/classes/', { method: 'POST', body: JSON.stringify(data) }),
+  updateClass: (id, data) => request(`/classes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteClass: (id) => request(`/classes/${id}`, { method: 'DELETE' }),
 
   // Alunos & Responsáveis
   getStudents: (params = '') => request(`/students/?${params}`),

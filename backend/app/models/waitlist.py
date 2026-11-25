@@ -7,7 +7,7 @@ from app.database import Base
 
 class ListaEspera(Base):
     """
-    Lista de espera para turmas que atingiram a capacidade máxima de 9 alunos.
+    Lista de espera para turmas que atingiram sua capacidade máxima configurada.
     Quando uma vaga libera, o sistema notifica o próximo da fila.
     """
     __tablename__ = "lista_espera"

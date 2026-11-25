@@ -241,3 +241,53 @@ def deve_cancelar_matricula_exigindo_motivo(client, admin_token, turma_fase3, al
     assert resp_com_motivo.json()["status"] == "CANCELADA"
     assert resp_com_motivo.json()["motivo_cancelamento"] == "Mudança de cidade para Campinas"
     assert resp_com_motivo.json()["multa_cancelamento"] == 50.0
+
+
+def deve_matricular_acima_de_9_alunos_e_escolher_curso_em_turma_mista(client, admin_token, db_session):
+    from app.models.teacher import Teacher
+    sala = Room(nome="Ateliê Amplo F3", capacidade=12, ativa=True)
+    curso1 = Course(nome="Desenho Artístico M1 F3", valor_mensalidade=260.0, ativo=True)
+    curso2 = Course(nome="Mangá F3", valor_mensalidade=275.0, ativo=True)
+    prof = Teacher(nome="Prof Misto F3", email="prof.misto.f3@hbartes.com", ativo=True)
+    db_session.add_all([sala, curso1, curso2, prof])
+    db_session.commit()
+
+    turma_resp = client.post(
+        "/api/v1/classes/",
+        json={
+            "nome": "Turma Mista Ampla",
+            "cursos_ids": [curso1.id, curso2.id],
+            "sala_id": sala.id,
+            "professor_id": prof.id,
+            "faixa_etaria": "JUVENIL",
+            "dia_semana": "TERCA",
+            "turno": "TARDE",
+            "horario_inicio": "14:30",
+            "horario_fim": "16:30",
+            "capacidade_maxima": 12,
+        },
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert turma_resp.status_code == 201
+    turma_id = turma_resp.json()["id"]
+
+    for i in range(10):
+        a = Aluno(nome=f"Aluno Amplo {i}", data_nascimento=date(2010, 2, 1), ativo=True)
+        db_session.add(a)
+        db_session.commit()
+        db_session.refresh(a)
+
+        mat_resp = client.post(
+            "/api/v1/enrollments/",
+            json={
+                "aluno_id": a.id,
+                "turma_id": turma_id,
+                "curso_id": curso2.id if i % 2 == 0 else curso1.id,
+                "data_matricula": "2026-11-01",
+                "data_inicio": "2026-11-05",
+                "valor_mensalidade": 275.0 if i % 2 == 0 else 260.0,
+            },
+            headers={"Authorization": f"Bearer {admin_token}"}
+        )
+        assert mat_resp.status_code == 201
+        assert mat_resp.json()["curso_id"] == (curso2.id if i % 2 == 0 else curso1.id)

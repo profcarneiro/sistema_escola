@@ -10,6 +10,7 @@ TIPOS_DESCONTO = ["irmao", "indicacao", "bolsa"]
 class MatriculaBase(BaseModel):
     aluno_id: int = Field(..., description="ID do aluno a ser matriculado")
     turma_id: int = Field(..., description="ID da turma de destino")
+    curso_id: Optional[int] = Field(None, description="ID do curso específico do aluno na turma (para turmas mistas)")
     data_matricula: date = Field(..., description="Data da formalização da matrícula")
     data_inicio: date = Field(..., description="Data de início das aulas")
     data_termino_previsto: Optional[date] = Field(None, description="Data prevista de término do curso")
@@ -35,6 +36,7 @@ class MatriculaCreate(MatriculaBase):
 
 class MatriculaUpdate(BaseModel):
     status: Optional[StatusMatricula] = None
+    curso_id: Optional[int] = None
     contrato_assinado: Optional[bool] = None
     data_assinatura_contrato: Optional[datetime] = None
     valor_mensalidade: Optional[float] = Field(None, ge=0.0)
@@ -66,6 +68,7 @@ class MatriculaResponse(MatriculaBase):
     multa_cancelamento: float
     aluno_nome: Optional[str] = None
     turma_nome: Optional[str] = None
+    curso_nome: Optional[str] = None
     valor_com_desconto: Optional[float] = None
     dia_vencimento: Optional[int] = 10
     quantidade_parcelas: Optional[int] = 12

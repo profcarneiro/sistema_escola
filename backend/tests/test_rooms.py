@@ -34,13 +34,23 @@ def deve_criar_sala_com_capacidade_valida(client, admin_token):
     assert data["capacidade"] == 9
 
 
-def deve_rejeitar_sala_com_capacidade_maior_que_9(client, admin_token):
+def deve_permitir_sala_com_capacidade_maior_que_9_e_configuravel(client, admin_token):
     resp = client.post(
         "/api/v1/rooms/",
-        json={"nome": "Sala Grande", "capacidade": 10},
+        json={"nome": "Sala Grande", "capacidade": 15},
         headers={"Authorization": f"Bearer {admin_token}"}
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["capacidade"] == 15
+
+    upd = client.put(
+        f"/api/v1/rooms/{data['id']}",
+        json={"capacidade": 20},
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert upd.status_code == 200
+    assert upd.json()["capacidade"] == 20
 
 
 def deve_rejeitar_sala_com_capacidade_zero(client, admin_token):

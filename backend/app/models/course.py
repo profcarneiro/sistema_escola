@@ -16,7 +16,8 @@ class Course(Base):
     ativo = Column(Boolean, default=True, nullable=False)
     criado_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
-    turmas = relationship("ClassGroup", back_populates="curso")
+    turmas = relationship("ClassGroup", back_populates="curso", foreign_keys="ClassGroup.curso_id")
+    turmas_mistas = relationship("ClassGroup", secondary="class_group_courses", back_populates="cursos")
 
     def __repr__(self) -> str:
         return f"<Course id={self.id} nome='{self.nome}'>"

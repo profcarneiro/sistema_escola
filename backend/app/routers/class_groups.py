@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 
 from app.core.audit import registrar_auditoria
 from app.database import get_db
@@ -9,66 +9,40 @@ from app.models.class_group import ClassGroup, FaixaEtaria, DiaSemana
 from app.models.room import Room
 from app.models.course import Course
 from app.models.teacher import Teacher
+from app.models.enrollment import Matricula
+from app.models.attendance import Lesson, ClassMakeUp, Evaluation
 from app.models.user import User, UserRole
-from app.schemas.class_group import ClassGroupCreate, ClassGroupUpdate, ClassGroupResponse
+from app.schemas.class_group import ClassGroupCreate, ClassGroupUpdate, ClassGroupResponse, CourseResumo
 from app.routers.auth import get_current_active_user, require_roles
 
 router = APIRouter(prefix="/classes", tags=["Turmas e Horários"])
 
 
-def verificar_sobreposicao_horario(inicio_a: str, fim_a: str, inicio_b: str, fim_b: str) -> bool:
-    """Verifica se dois intervalos de horário (formato HH:MM) se sobrepõem."""
-    return inicio_a < fim_b and fim_a > inicio_b
-
-
-def validar_conflitos(
-    db: Session,
-    sala_id: int,
-    professor_id: int,
-    dia_semana: str,
-    horario_inicio: str,
-    horario_fim: str,
-    turma_id_ignorar: Optional[int] = None
-):
-    """
-    Verifica se há conflitos de agendamento:
-    1. Sala já ocupada no mesmo dia e intervalo de horário.
-    2. Professor já alocado em outra turma no mesmo dia e intervalo de horário.
-    """
-    # Turmas ativas no mesmo dia da semana
-    query = db.query(ClassGroup).filter(
-        ClassGroup.dia_semana == dia_semana,
-        ClassGroup.ativa.is_(True)
-    )
-    if turma_id_ignorar is not None:
-        query = query.filter(ClassGroup.id != turma_id_ignorar)
-
-    turmas_no_dia = query.all()
-
-    for turma in turmas_no_dia:
-        if verificar_sobreposicao_horario(horario_inicio, horario_fim, turma.horario_inicio, turma.horario_fim):
-            if turma.sala_id == sala_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        f"Conflito de sala: A sala já está reservada para a turma '{turma.nome}' "
-                        f"no horário {turma.horario_inicio} às {turma.horario_fim} ({dia_semana})."
-                    )
-                )
-            if turma.professor_id == professor_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        f"Conflito de professor: O professor já está alocado na turma '{turma.nome}' "
-                        f"no horário {turma.horario_inicio} às {turma.horario_fim} ({dia_semana})."
-                    )
-                )
+def _resolver_cursos_ativos(db: Session, cursos_ids: List[int]) -> List[Course]:
+    """Valida e retorna os cursos ativos na ordem informada."""
+    cursos = db.query(Course).filter(Course.id.in_(cursos_ids), Course.ativo.is_(True)).all()
+    cursos_map = {c.id: c for c in cursos}
+    faltantes = [cid for cid in cursos_ids if cid not in cursos_map]
+    if faltantes:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Uma ou mais modalidades artísticas ativas não foram encontradas."
+        )
+    return [cursos_map[cid] for cid in cursos_ids]
 
 
 def formatar_turma_response(turma: ClassGroup) -> ClassGroupResponse:
+    cursos_lista = list(turma.cursos or [])
+    if not cursos_lista and turma.curso:
+        cursos_lista = [turma.curso]
+
     resp = ClassGroupResponse.model_validate(turma)
-    if turma.curso:
-        resp.curso_nome = turma.curso.nome
+    resp.cursos = [CourseResumo.model_validate(c) for c in cursos_lista]
+    resp.cursos_ids = [c.id for c in cursos_lista]
+    resp.cursos_nomes = [c.nome for c in cursos_lista]
+    if cursos_lista:
+        resp.curso_id = cursos_lista[0].id
+        resp.curso_nome = ", ".join(c.nome for c in cursos_lista)
     if turma.sala:
         resp.sala_nome = turma.sala.nome
     if turma.professor:
@@ -87,7 +61,12 @@ def list_class_groups(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    query = db.query(ClassGroup)
+    query = db.query(ClassGroup).options(
+        joinedload(ClassGroup.cursos),
+        joinedload(ClassGroup.curso),
+        joinedload(ClassGroup.sala),
+        joinedload(ClassGroup.professor),
+    )
     if apenas_ativas:
         query = query.filter(ClassGroup.ativa.is_(True))
     if dia_semana:
@@ -95,7 +74,12 @@ def list_class_groups(
     if faixa_etaria:
         query = query.filter(ClassGroup.faixa_etaria == faixa_etaria.value)
     if curso_id:
-        query = query.filter(ClassGroup.curso_id == curso_id)
+        query = query.filter(
+            or_(
+                ClassGroup.curso_id == curso_id,
+                ClassGroup.cursos.any(Course.id == curso_id)
+            )
+        )
     if sala_id:
         query = query.filter(ClassGroup.sala_id == sala_id)
     if professor_id:
@@ -103,7 +87,9 @@ def list_class_groups(
 
     # Professores têm acesso apenas às próprias turmas
     if current_user.role == UserRole.PROFESSOR.value:
-        prof = db.query(Teacher).filter((Teacher.user_id == current_user.id) | (Teacher.email == current_user.email)).first()
+        prof = db.query(Teacher).filter(
+            (Teacher.user_id == current_user.id) | (Teacher.email == current_user.email)
+        ).first()
         if prof:
             query = query.filter(ClassGroup.professor_id == prof.id)
         else:
@@ -125,27 +111,20 @@ def create_class_group(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value))
 ):
-    """Cria uma nova turma aplicando o limite máximo estrito de 9 alunos e prevenindo choques de horário."""
-    # 1. Valida existência do curso
-    curso = db.query(Course).filter(Course.id == turma_in.curso_id).first()
-    if not curso or not curso.ativo:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Modalidade artística ativa não encontrada.")
+    """Cria uma nova turma (incluindo turmas mistas com múltiplos cursos e capacidade configurável por sala)."""
+    # 1. Valida existência dos cursos associados
+    cursos = _resolver_cursos_ativos(db, turma_in.cursos_ids)
 
-    # 2. Valida existência da sala e capacidade máxima
+    # 2. Valida existência da sala e capacidade configurável
     sala = db.query(Room).filter(Room.id == turma_in.sala_id).first()
     if not sala or not sala.ativa:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sala ativa não encontrada.")
 
-    if turma_in.capacidade_maxima > 9:
+    capacidade_turma = turma_in.capacidade_maxima if turma_in.capacidade_maxima is not None else sala.capacidade
+    if capacidade_turma > sala.capacidade:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="A capacidade máxima de uma turma não pode exceder 9 alunos (regra da Escola Helena Barufaldi)."
-        )
-
-    if turma_in.capacidade_maxima > sala.capacidade:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"A capacidade da turma ({turma_in.capacidade_maxima}) não pode ser maior que a da sala ({sala.capacidade})."
+            detail=f"A capacidade da turma ({capacidade_turma}) não pode ser maior que a da sala ({sala.capacidade})."
         )
 
     # 3. Valida existência do professor
@@ -153,19 +132,9 @@ def create_class_group(
     if not professor or not professor.ativo:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor ativo não encontrado.")
 
-    # 4. Validação anti-conflito
-    validar_conflitos(
-        db=db,
-        sala_id=turma_in.sala_id,
-        professor_id=turma_in.professor_id,
-        dia_semana=turma_in.dia_semana.value,
-        horario_inicio=turma_in.horario_inicio,
-        horario_fim=turma_in.horario_fim
-    )
-
     nova_turma = ClassGroup(
         nome=turma_in.nome.strip(),
-        curso_id=turma_in.curso_id,
+        curso_id=cursos[0].id,
         sala_id=turma_in.sala_id,
         professor_id=turma_in.professor_id,
         faixa_etaria=turma_in.faixa_etaria.value,
@@ -173,9 +142,11 @@ def create_class_group(
         turno=turma_in.turno.value,
         horario_inicio=turma_in.horario_inicio,
         horario_fim=turma_in.horario_fim,
-        capacidade_maxima=turma_in.capacidade_maxima,
+        capacidade_maxima=capacidade_turma,
         ativa=True
     )
+    nova_turma.cursos = cursos
+
     db.add(nova_turma)
     db.commit()
     db.refresh(nova_turma)
@@ -188,7 +159,7 @@ def create_class_group(
         registro_id=str(nova_turma.id),
         detalhes={
             "nome": nova_turma.nome,
-            "curso": curso.nome,
+            "cursos": [c.nome for c in cursos],
             "sala": sala.nome,
             "professor": professor.nome,
             "dia": nova_turma.dia_semana,
@@ -207,7 +178,12 @@ def get_class_group(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    turma = db.query(ClassGroup).filter(ClassGroup.id == turma_id).first()
+    turma = db.query(ClassGroup).options(
+        joinedload(ClassGroup.cursos),
+        joinedload(ClassGroup.curso),
+        joinedload(ClassGroup.sala),
+        joinedload(ClassGroup.professor),
+    ).filter(ClassGroup.id == turma_id).first()
     if not turma:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turma não encontrada.")
     return formatar_turma_response(turma)
@@ -221,42 +197,55 @@ def update_class_group(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value))
 ):
-    turma = db.query(ClassGroup).filter(ClassGroup.id == turma_id).first()
+    turma = db.query(ClassGroup).options(joinedload(ClassGroup.cursos)).filter(ClassGroup.id == turma_id).first()
     if not turma:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turma não encontrada.")
 
     sala_id = turma_update.sala_id if turma_update.sala_id is not None else turma.sala_id
-    professor_id = turma_update.professor_id if turma_update.professor_id is not None else turma.professor_id
-    dia_semana = turma_update.dia_semana.value if turma_update.dia_semana is not None else turma.dia_semana
     horario_inicio = turma_update.horario_inicio if turma_update.horario_inicio is not None else turma.horario_inicio
     horario_fim = turma_update.horario_fim if turma_update.horario_fim is not None else turma.horario_fim
 
     if horario_inicio >= horario_fim:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Horário de início deve ser menor que o de término.")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Horário de início deve ser menor que o de término."
+        )
 
-    # Se houve alteração de sala, professor ou horário, revalidar conflitos
-    validar_conflitos(
-        db=db,
-        sala_id=sala_id,
-        professor_id=professor_id,
-        dia_semana=dia_semana,
-        horario_inicio=horario_inicio,
-        horario_fim=horario_fim,
-        turma_id_ignorar=turma.id
+    sala = db.query(Room).filter(Room.id == sala_id).first()
+    if not sala or (turma_update.sala_id is not None and not sala.ativa):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sala ativa não encontrada.")
+
+    if turma_update.professor_id is not None:
+        professor = db.query(Teacher).filter(Teacher.id == turma_update.professor_id).first()
+        if not professor or not professor.ativo:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Professor ativo não encontrado.")
+
+    capacidade_efetiva = (
+        turma_update.capacidade_maxima
+        if turma_update.capacidade_maxima is not None
+        else turma.capacidade_maxima
     )
+    if capacidade_efetiva > sala.capacidade:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"A capacidade da turma ({capacidade_efetiva}) não pode exceder a capacidade da sala ({sala.capacidade})."
+        )
+
+    cursos_novos_ids: Optional[List[int]] = None
+    if turma_update.cursos_ids is not None:
+        cursos_novos_ids = turma_update.cursos_ids
+    elif turma_update.curso_id is not None:
+        cursos_novos_ids = [turma_update.curso_id]
+
+    if cursos_novos_ids is not None:
+        cursos = _resolver_cursos_ativos(db, cursos_novos_ids)
+        turma.cursos = cursos
+        turma.curso_id = cursos[0].id
 
     if turma_update.capacidade_maxima is not None:
-        if turma_update.capacidade_maxima > 9:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="A capacidade máxima não pode ultrapassar 9.")
-        sala = db.query(Room).filter(Room.id == sala_id).first()
-        if sala and turma_update.capacidade_maxima > sala.capacidade:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Capacidade da turma não pode exceder capacidade da sala.")
         turma.capacidade_maxima = turma_update.capacidade_maxima
-
     if turma_update.nome is not None:
         turma.nome = turma_update.nome.strip()
-    if turma_update.curso_id is not None:
-        turma.curso_id = turma_update.curso_id
     if turma_update.sala_id is not None:
         turma.sala_id = turma_update.sala_id
     if turma_update.professor_id is not None:
@@ -283,8 +272,49 @@ def update_class_group(
         acao="TURMA_ATUALIZADA",
         entidade="ClassGroup",
         registro_id=str(turma.id),
-        detalhes={"nome": turma.nome, "ativa": turma.ativa},
+        detalhes={"nome": turma.nome, "ativa": turma.ativa, "capacidade": turma.capacidade_maxima},
         usuario=current_user,
         ip=client_ip
     )
     return formatar_turma_response(turma)
+
+
+@router.delete("/{turma_id}", status_code=status.HTTP_200_OK, summary="Excluir ou desativar turma")
+def delete_class_group(
+    turma_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value))
+):
+    turma = db.query(ClassGroup).filter(ClassGroup.id == turma_id).first()
+    if not turma:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turma não encontrada.")
+
+    has_links = (
+        db.query(Matricula).filter(Matricula.turma_id == turma_id).count()
+        + db.query(Lesson).filter(Lesson.turma_id == turma_id).count()
+        + db.query(ClassMakeUp).filter(ClassMakeUp.turma_destino_id == turma_id).count()
+        + db.query(Evaluation).filter(Evaluation.turma_id == turma_id).count()
+    )
+
+    if has_links > 0:
+        turma.ativa = False
+        db.commit()
+        db.refresh(turma)
+        msg = f"Turma '{turma.nome}' possui matrículas ou registros vinculados e foi desativada com sucesso."
+    else:
+        db.delete(turma)
+        db.commit()
+        msg = f"Turma '{turma.nome}' excluída com sucesso."
+
+    client_ip = request.client.host if request.client else None
+    registrar_auditoria(
+        db=db,
+        acao="TURMA_EXCLUIDA",
+        entidade="ClassGroup",
+        registro_id=str(turma_id),
+        detalhes={"acao": msg},
+        usuario=current_user,
+        ip=client_ip
+    )
+    return {"status": "ok", "mensagem": msg}

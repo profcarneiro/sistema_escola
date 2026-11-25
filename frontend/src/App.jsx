@@ -59,8 +59,16 @@ export default function App() {
   const [editingEnrollment, setEditingEnrollment] = useState(null);
   const [preselectedStudentId, setPreselectedStudentId] = useState(null);
 
-  // Modais de Turmas, Financeiro e Usuários
+  // Modais de Turmas, Salas, Financeiro e Usuários
   const [showClassModal, setShowClassModal] = useState(false);
+  const [editingClass, setEditingClass] = useState(null);
+  const [classSelectedCourses, setClassSelectedCourses] = useState([]);
+  const [classSalaId, setClassSalaId] = useState('');
+  const [classCapacidade, setClassCapacidade] = useState('9');
+  const [showRoomModal, setShowRoomModal] = useState(false);
+  const [editingRoom, setEditingRoom] = useState(null);
+  const [enrollSelectedTurmaId, setEnrollSelectedTurmaId] = useState('');
+  const [enrollSelectedCursoId, setEnrollSelectedCursoId] = useState('');
   const [showPayModal, setShowPayModal] = useState(null);
   const [payMethod, setPayMethod] = useState('PIX');
   const [payValue, setPayValue] = useState('');
@@ -522,6 +530,7 @@ export default function App() {
     const payload = {
       aluno_id: parseInt(formData.get('aluno_id')),
       turma_id: parseInt(formData.get('turma_id')),
+      curso_id: formData.get('curso_id') ? parseInt(formData.get('curso_id')) : (enrollSelectedCursoId ? parseInt(enrollSelectedCursoId) : null),
       data_matricula: formData.get('data_matricula'),
       data_inicio: formData.get('data_inicio'),
       data_termino_previsto: formData.get('data_termino_previsto') || null,
@@ -544,6 +553,8 @@ export default function App() {
       }
       setShowEnrollmentModal(false);
       setPreselectedStudentId(null);
+      setEnrollSelectedTurmaId('');
+      setEnrollSelectedCursoId('');
       await loadDashboardData();
     } catch (err) {
       setModalError(err.message || 'Erro ao realizar matrícula.');
@@ -662,27 +673,115 @@ export default function App() {
     }
   };
 
-  // 5. Cadastrar Turma
-  const handleCreateClass = async (e) => {
+  // 5. Cadastrar / Editar / Excluir Turma e Salas
+  const openNewClassModal = () => {
+    setEditingClass(null);
+    setClassSelectedCourses([]);
+    const firstRoom = rooms[0];
+    setClassSalaId(firstRoom ? String(firstRoom.id) : '');
+    setClassCapacidade(firstRoom ? String(firstRoom.capacidade) : '9');
+    setShowClassModal(true);
+  };
+
+  const openEditClassModal = (cls) => {
+    setEditingClass(cls);
+    const ids = cls.cursos_ids && cls.cursos_ids.length > 0
+      ? cls.cursos_ids
+      : (cls.curso_id ? [cls.curso_id] : []);
+    setClassSelectedCourses(ids);
+    setClassSalaId(String(cls.sala_id));
+    setClassCapacidade(String(cls.capacidade_maxima));
+    setShowClassModal(true);
+  };
+
+  const toggleClassCourse = (courseId) => {
+    setClassSelectedCourses((prev) =>
+      prev.includes(courseId) ? prev.filter((id) => id !== courseId) : [...prev, courseId]
+    );
+  };
+
+  const handleSaveClass = async (e) => {
     e.preventDefault();
+    if (classSelectedCourses.length === 0) {
+      showToast('Selecione pelo menos um curso/modalidade para a turma.', 'error');
+      return;
+    }
     const formData = new FormData(e.target);
+    const faixaEtaria = formData.get('faixa_etaria');
+    if (!faixaEtaria) {
+      showToast('Selecione a faixa etária da turma.', 'error');
+      return;
+    }
+
+    const salaId = parseInt(formData.get('sala_id'), 10);
+    const capacidade = parseInt(formData.get('capacidade_maxima'), 10);
+    if (!capacidade || capacidade < 1) {
+      showToast('Informe uma capacidade máxima válida (mínimo 1 aluno).', 'error');
+      return;
+    }
+
     const payload = {
       nome: formData.get('nome'),
-      curso_id: parseInt(formData.get('curso_id')),
-      sala_id: parseInt(formData.get('sala_id')),
-      professor_id: parseInt(formData.get('professor_id')),
-      faixa_etaria: formData.get('faixa_etaria'),
+      curso_id: classSelectedCourses[0],
+      cursos_ids: classSelectedCourses,
+      sala_id: salaId,
+      professor_id: parseInt(formData.get('professor_id'), 10),
+      faixa_etaria: faixaEtaria,
       dia_semana: formData.get('dia_semana'),
       turno: formData.get('turno'),
       horario_inicio: formData.get('horario_inicio'),
       horario_fim: formData.get('horario_fim'),
-      capacidade_maxima: 9
+      capacidade_maxima: capacidade,
+      ...(editingClass ? { ativa: formData.get('ativa') === 'on' } : {}),
     };
 
     try {
-      await api.createClass(payload);
-      showToast('Turma criada com sucesso!');
+      if (editingClass) {
+        await api.updateClass(editingClass.id, payload);
+        showToast('Turma atualizada com sucesso!');
+      } else {
+        await api.createClass(payload);
+        showToast('Turma criada com sucesso!');
+      }
       setShowClassModal(false);
+      setEditingClass(null);
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteClass = async (cls) => {
+    const confirmMsg = `Deseja realmente excluir ou desativar a turma '${cls.nome}'?`;
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      const res = await api.deleteClass(cls.id);
+      showToast(res.mensagem || 'Turma processada com sucesso!');
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleSaveRoom = async (e) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const payload = {
+      nome: formData.get('nome'),
+      capacidade: parseInt(formData.get('capacidade'), 10),
+      descricao: formData.get('descricao') || null,
+      ...(editingRoom ? { ativa: formData.get('ativa') === 'on' } : {}),
+    };
+    try {
+      if (editingRoom) {
+        await api.updateRoom(editingRoom.id, payload);
+        showToast(`Sala '${payload.nome}' atualizada com sucesso!`);
+      } else {
+        await api.createRoom(payload);
+        showToast(`Sala '${payload.nome}' cadastrada com sucesso!`);
+      }
+      setShowRoomModal(false);
+      setEditingRoom(null);
       loadDashboardData();
     } catch (err) {
       showToast(err.message, 'error');
@@ -1139,11 +1238,11 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Salas e Teto de 9 Alunos */}
+              {/* Salas e Capacidade */}
               <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                 <h3 className="text-base font-bold text-slate-800 mb-4 flex items-center gap-2">
                   <Palette className="w-5 h-5 text-amber-600" />
-                  Ocupação dos Estúdios Físicos (Máximo Rigoroso de 9 Alunos por Sala)
+                  Ocupação dos Estúdios Físicos (Capacidade Configurável por Sala)
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {rooms.map((room) => {
@@ -1343,10 +1442,16 @@ export default function App() {
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 {courses.map((course) => {
-                  const courseClasses = classes.filter(c => c.curso_id === course.id);
+                  const classHasCourse = (c) =>
+                    Array.isArray(c.cursos_ids) && c.cursos_ids.length > 0
+                      ? c.cursos_ids.includes(course.id)
+                      : c.curso_id === course.id;
+                  const courseClasses = classes.filter(classHasCourse);
                   const enrolledCount = enrollments.filter(e => {
+                    if (e.status !== 'ATIVA' && e.status !== 'EXPERIMENTAL') return false;
+                    if (e.curso_id) return e.curso_id === course.id;
                     const t = classes.find(c => c.id === e.turma_id);
-                    return t && t.curso_id === course.id && (e.status === 'ATIVA' || e.status === 'EXPERIMENTAL');
+                    return t && classHasCourse(t);
                   }).length;
 
                   return (
@@ -1550,6 +1655,9 @@ export default function App() {
                         </td>
                         <td className="px-6 py-4">
                           <span className="font-semibold text-slate-800 block">{enr.turma_nome || `Turma #${enr.turma_id}`}</span>
+                          {enr.curso_nome && (
+                            <span className="text-[11px] text-slate-500 block">{enr.curso_nome}</span>
+                          )}
                           {enr.aula_experimental && (
                             <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">Aula Experimental</span>
                           )}
@@ -1634,39 +1742,76 @@ export default function App() {
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                   <h3 className="font-bold text-slate-800 text-lg">Grade de Turmas e Horários Semanais</h3>
-                  <p className="text-xs text-slate-500">Teto rigoroso de 9 alunos por turma. Validação automática contra choque de sala e professor.</p>
+                  <p className="text-xs text-slate-500">Capacidade configurável por sala e suporte a turmas mistas com múltiplos cursos no mesmo horário.</p>
                 </div>
-                <button
-                  onClick={() => setShowClassModal(true)}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Nova Turma
-                </button>
+                {!isProfessor && (
+                  <button
+                    onClick={openNewClassModal}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Nova Turma
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {classes.map((cls) => {
                   const enrolledNames = getTurmaStudents(cls.id);
                   const enrolledCount = enrolledNames.length;
-                  const isFull = enrolledCount >= cls.capacidade_maxima;
+                  const capMax = cls.capacidade_maxima || 1;
+                  const isFull = enrolledCount >= capMax;
+                  const cursosLista = Array.isArray(cls.cursos_nomes) && cls.cursos_nomes.length > 0
+                    ? cls.cursos_nomes
+                    : [cls.curso_nome || 'Artes'];
 
                   return (
                     <div key={cls.id} className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 hover:border-amber-400 transition">
-                      <div className="flex items-start justify-between">
+                      <div className="flex items-start justify-between gap-2">
                         <div>
                           <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wide">
                             {cls.dia_semana} • {cls.turno} ({cls.horario_inicio} às {cls.horario_fim})
                           </span>
                           <h4 className="text-base font-bold text-slate-800 mt-1">{cls.nome}</h4>
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            Curso: <span className="font-semibold text-slate-700">{cls.curso_nome || 'Artes'}</span> • Faixa: <span className="font-semibold text-slate-700">{cls.faixa_etaria}</span>
-                          </p>
+                          <div className="flex flex-wrap items-center gap-1 mt-1">
+                            {cursosLista.map((nomeCurso, idx) => (
+                              <span key={idx} className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                                {nomeCurso}
+                              </span>
+                            ))}
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
+                              cls.faixa_etaria
+                                ? 'bg-slate-100 text-slate-700'
+                                : 'bg-red-50 text-red-700 border border-red-200'
+                            }`}>
+                              {cls.faixa_etaria || 'Faixa etária não selecionada'}
+                            </span>
+                          </div>
                         </div>
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${
-                          isFull ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'
-                        }`}>
-                          {enrolledCount} / {cls.capacidade_maxima} vagas
-                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${
+                            isFull ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {enrolledCount} / {capMax} vagas
+                          </span>
+                          {!isProfessor && (
+                            <>
+                              <button
+                                onClick={() => openEditClassModal(cls)}
+                                className="p-1.5 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded transition"
+                                title="Editar turma"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteClass(cls)}
+                                className="p-1.5 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded transition"
+                                title="Excluir ou desativar turma"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </div>
 
                       <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
@@ -1678,7 +1823,7 @@ export default function App() {
                         <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                           <div
                             className={`h-2 rounded-full ${isFull ? 'bg-red-600' : 'bg-amber-600'}`}
-                            style={{ width: `${(enrolledCount / cls.capacidade_maxima) * 100}%` }}
+                            style={{ width: `${Math.min(100, (enrolledCount / capMax) * 100)}%` }}
                           ></div>
                         </div>
                       </div>
@@ -1710,9 +1855,22 @@ export default function App() {
           {/* TAB 7: SALAS & CAPACIDADE */}
           {activeTab === 'rooms' && (
             <div className="space-y-6">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
-                <h3 className="font-bold text-slate-800 text-lg">Estúdios de Criação e Salas de Aula</h3>
-                <p className="text-xs text-slate-500">Infraestrutura física homologada com teto inegociável de 9 alunos por sala.</p>
+              <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-lg">Estúdios de Criação e Salas de Aula</h3>
+                  <p className="text-xs text-slate-500">Gerencie a infraestrutura física e configure a capacidade máxima de cada sala.</p>
+                </div>
+                {isAdminOrCoord && (
+                  <button
+                    onClick={() => {
+                      setEditingRoom(null);
+                      setShowRoomModal(true);
+                    }}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg transition flex items-center gap-1.5 shadow self-start sm:self-auto"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Nova Sala
+                  </button>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -1725,9 +1883,23 @@ export default function App() {
                           <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-700 flex items-center justify-center font-bold">
                             <Palette className="w-4 h-4" />
                           </span>
-                          <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800">
-                            Capacidade: {room.capacidade} alunos
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-800">
+                              Capacidade: {room.capacidade} alunos
+                            </span>
+                            {isAdminOrCoord && (
+                              <button
+                                onClick={() => {
+                                  setEditingRoom(room);
+                                  setShowRoomModal(true);
+                                }}
+                                className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded transition"
+                                title="Editar sala e capacidade"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <h4 className="text-base font-bold text-slate-800 mt-3">{room.nome}</h4>
                         <p className="text-xs text-slate-500 mt-1">{room.descricao}</p>
@@ -2368,7 +2540,7 @@ export default function App() {
                               <td className="px-4 py-3">{item.professor_nome}</td>
                               <td className="px-4 py-3">{item.dia_semana ? `${item.dia_semana} • ${item.horario}` : 'Regular'}</td>
                               <td className="px-4 py-3 text-center">
-                                <span className="font-semibold text-slate-700">{item.total_matriculados ?? '—'}</span> / {item.capacidade_maxima || 9}
+                                <span className="font-semibold text-slate-700">{item.total_matriculados ?? '—'}</span> / {item.capacidade_maxima ?? '—'}
                               </td>
                               <td className="px-4 py-3 text-center font-bold text-slate-700">{item.total_aulas_registradas ?? item.total_aulas ?? 0}</td>
                               <td className="px-4 py-3 text-center text-emerald-700 font-semibold">{item.total_presencas}</td>
@@ -3378,6 +3550,8 @@ export default function App() {
                 onClick={() => {
                   setShowEnrollmentModal(false);
                   setModalError('');
+                  setEnrollSelectedTurmaId('');
+                  setEnrollSelectedCursoId('');
                 }}
                 className="text-slate-400 hover:text-slate-600"
               >
@@ -3407,18 +3581,29 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Selecione o Curso & Turma</label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Selecione a Turma</label>
                 <select
                   name="turma_id"
                   required
+                  value={enrollSelectedTurmaId}
                   onChange={(e) => {
-                    const selTurma = classes.find(c => c.id === parseInt(e.target.value));
+                    const turmaVal = e.target.value;
+                    setEnrollSelectedTurmaId(turmaVal);
+                    const selTurma = classes.find(c => c.id === parseInt(turmaVal, 10));
                     if (selTurma) {
-                      const selCourse = courses.find(cr => cr.id === selTurma.curso_id);
-                      if (selCourse && selCourse.valor_mensalidade != null) {
+                      const turmaCursos = Array.isArray(selTurma.cursos) && selTurma.cursos.length > 0
+                        ? selTurma.cursos
+                        : courses.filter(cr => cr.id === selTurma.curso_id);
+                      const firstCurso = turmaCursos[0];
+                      setEnrollSelectedCursoId(firstCurso ? String(firstCurso.id) : '');
+                      const fullCourse = firstCurso ? courses.find(cr => cr.id === firstCurso.id) : null;
+                      const valMensal = fullCourse?.valor_mensalidade ?? firstCurso?.valor_mensalidade;
+                      if (valMensal != null) {
                         const valInput = document.getElementById('enroll_valor_mensalidade');
-                        if (valInput) valInput.value = Number(selCourse.valor_mensalidade).toFixed(2);
+                        if (valInput) valInput.value = Number(valMensal).toFixed(2);
                       }
+                    } else {
+                      setEnrollSelectedCursoId('');
                     }
                   }}
                   className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
@@ -3435,6 +3620,40 @@ export default function App() {
                   })}
                 </select>
               </div>
+
+              {(() => {
+                const selTurma = classes.find(c => c.id === parseInt(enrollSelectedTurmaId, 10));
+                if (!selTurma) return null;
+                const turmaCursos = Array.isArray(selTurma.cursos) && selTurma.cursos.length > 0
+                  ? selTurma.cursos
+                  : courses.filter(cr => cr.id === selTurma.curso_id);
+                if (turmaCursos.length <= 1) return null;
+                return (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Curso do Aluno nesta Turma Mista</label>
+                    <select
+                      name="curso_id"
+                      required
+                      value={enrollSelectedCursoId}
+                      onChange={(e) => {
+                        const cid = e.target.value;
+                        setEnrollSelectedCursoId(cid);
+                        const fullCourse = courses.find(cr => cr.id === parseInt(cid, 10));
+                        if (fullCourse && fullCourse.valor_mensalidade != null) {
+                          const valInput = document.getElementById('enroll_valor_mensalidade');
+                          if (valInput) valInput.value = Number(fullCourse.valor_mensalidade).toFixed(2);
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="">-- Selecione o curso do aluno --</option>
+                      {turmaCursos.map(cr => (
+                        <option key={cr.id} value={cr.id}>{cr.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -3735,145 +3954,338 @@ export default function App() {
         </div>
       )}
 
-      {/* MODAL: NOVA TURMA */}
-      {showClassModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-slate-800 text-base">Criar Nova Turma</h3>
-              <button onClick={() => setShowClassModal(false)} className="text-slate-400 hover:text-slate-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateClass} className="space-y-4 mt-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Nome da Turma</label>
-                <input
-                  name="nome"
-                  required
-                  placeholder="Ex: Aquarela Avançada Quarta Tarde"
-                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
-                />
+      {/* MODAL: CRIAR / EDITAR TURMA */}
+      {showClassModal && (() => {
+        const selectedRoom = rooms.find(r => r.id === parseInt(classSalaId, 10));
+        return (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <h3 className="font-bold text-slate-800 text-base">
+                  {editingClass ? 'Editar Turma' : 'Criar Nova Turma'}
+                </h3>
+                <button
+                  onClick={() => {
+                    setShowClassModal(false);
+                    setEditingClass(null);
+                  }}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              <form key={editingClass ? `edit-cls-${editingClass.id}` : 'new-cls'} onSubmit={handleSaveClass} className="space-y-4 mt-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Curso / Modalidade</label>
-                  <select name="curso_id" required className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
-                    {courses.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                  </select>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Nome da Turma</label>
+                  <input
+                    name="nome"
+                    required
+                    defaultValue={editingClass?.nome || ''}
+                    placeholder="Ex: Aquarela Avançada Quarta Tarde"
+                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                  />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Estúdio / Sala (Cap. 9)</label>
-                  <select name="sala_id" required className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
-                    {rooms.map(r => <option key={r.id} value={r.id}>{r.nome}</option>)}
-                  </select>
-                </div>
-              </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-slate-600">Professor Responsável</label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowClassModal(false);
-                      setShowTeacherModal(true);
-                    }}
-                    className="text-xs text-amber-700 hover:underline font-semibold flex items-center gap-1"
-                  >
-                    <Plus className="w-3 h-3" /> Cadastrar Novo Professor
-                  </button>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-600">Cursos / Modalidades (Turma Mista)</label>
+                    <span className="text-[11px] text-amber-700 font-semibold">{classSelectedCourses.length} selecionado(s)</span>
+                  </div>
+                  <div className="border rounded-lg p-2.5 max-h-36 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 bg-slate-50">
+                    {courses.map(c => {
+                      const checked = classSelectedCourses.includes(c.id);
+                      return (
+                        <label
+                          key={c.id}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition border ${
+                            checked
+                              ? 'bg-amber-50 border-amber-300 text-amber-900 font-semibold'
+                              : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleClassCourse(c.id)}
+                            className="rounded text-amber-600"
+                          />
+                          <span className="truncate">{c.nome}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
-                {teachers.length > 0 ? (
-                  <select name="professor_id" required className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
-                    {teachers.map(t => <option key={t.id} value={t.id}>{t.nome} ({t.especialidades || 'Geral'})</option>)}
-                  </select>
-                ) : (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center justify-between">
-                    <span>Nenhum professor cadastrado ainda!</span>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Estúdio / Sala</label>
+                    <select
+                      name="sala_id"
+                      required
+                      value={classSalaId}
+                      onChange={(e) => {
+                        const sid = e.target.value;
+                        setClassSalaId(sid);
+                        const rObj = rooms.find(r => r.id === parseInt(sid, 10));
+                        if (rObj) {
+                          if (!editingClass || parseInt(classCapacidade || '0', 10) > rObj.capacidade) {
+                            setClassCapacidade(String(rObj.capacidade));
+                          }
+                        }
+                      }}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="">-- Selecione a sala --</option>
+                      {rooms.map(r => (
+                        <option key={r.id} value={r.id}>{r.nome} (Cap. {r.capacidade})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Capacidade da Turma</label>
+                    <input
+                      name="capacidade_maxima"
+                      type="number"
+                      min="1"
+                      max={selectedRoom ? selectedRoom.capacidade : undefined}
+                      required
+                      value={classCapacidade}
+                      onChange={(e) => setClassCapacidade(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                    />
+                    {selectedRoom && (
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        Máximo da sala: {selectedRoom.capacidade} alunos
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-slate-600">Professor Responsável</label>
                     <button
                       type="button"
                       onClick={() => {
                         setShowClassModal(false);
                         setShowTeacherModal(true);
                       }}
-                      className="px-2 py-1 bg-red-600 text-white rounded font-semibold text-[11px]"
+                      className="text-xs text-amber-700 hover:underline font-semibold flex items-center gap-1"
                     >
-                      Cadastrar Agora
+                      <Plus className="w-3 h-3" /> Cadastrar Novo Professor
                     </button>
                   </div>
+                  {teachers.length > 0 ? (
+                    <select
+                      name="professor_id"
+                      required
+                      defaultValue={editingClass?.professor_id || ''}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="">-- Selecione o professor --</option>
+                      {teachers.map(t => <option key={t.id} value={t.id}>{t.nome} ({t.especialidades || 'Geral'})</option>)}
+                    </select>
+                  ) : (
+                    <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center justify-between">
+                      <span>Nenhum professor cadastrado ainda!</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowClassModal(false);
+                          setShowTeacherModal(true);
+                        }}
+                        className="px-2 py-1 bg-red-600 text-white rounded font-semibold text-[11px]"
+                      >
+                        Cadastrar Agora
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Faixa Etária *</label>
+                    <select
+                      name="faixa_etaria"
+                      required
+                      defaultValue={editingClass?.faixa_etaria || ''}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="">-- Selecione a faixa etária --</option>
+                      <option value="INFANTIL">INFANTIL (7 a 10 anos)</option>
+                      <option value="JUVENIL">JUVENIL (11 a 17 anos)</option>
+                      <option value="ADULTO">ADULTO (18 a 65 anos)</option>
+                      <option value="TERCEIRA_IDADE">TERCEIRA IDADE (65+)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Dia da Semana</label>
+                    <select
+                      name="dia_semana"
+                      required
+                      defaultValue={editingClass?.dia_semana || 'SEGUNDA'}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="SEGUNDA">Segunda-feira</option>
+                      <option value="TERCA">Terça-feira</option>
+                      <option value="QUARTA">Quarta-feira</option>
+                      <option value="QUINTA">Quinta-feira</option>
+                      <option value="SEXTA">Sexta-feira</option>
+                      <option value="SABADO">Sábado</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Turno</label>
+                    <select
+                      name="turno"
+                      required
+                      defaultValue={editingClass?.turno || 'TARDE'}
+                      className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500"
+                    >
+                      <option value="MANHA">Manhã</option>
+                      <option value="TARDE">Tarde</option>
+                      <option value="NOITE">Noite</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Início (HH:MM)</label>
+                    <input
+                      name="horario_inicio"
+                      type="text"
+                      defaultValue={editingClass?.horario_inicio || '14:00'}
+                      placeholder="14:00"
+                      required
+                      className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">Término (HH:MM)</label>
+                    <input
+                      name="horario_fim"
+                      type="text"
+                      defaultValue={editingClass?.horario_fim || '16:00'}
+                      placeholder="16:00"
+                      required
+                      className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                    />
+                  </div>
+                </div>
+
+                {editingClass && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      name="ativa"
+                      type="checkbox"
+                      id="class_active"
+                      defaultChecked={editingClass.ativa}
+                      className="rounded text-amber-600"
+                    />
+                    <label htmlFor="class_active" className="text-xs text-slate-700 font-medium">Turma Ativa</label>
+                  </div>
                 )}
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Faixa Etária</label>
-                  <select name="faixa_etaria" className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
-                    <option value="INFANTIL">INFANTIL (7 a 10 anos)</option>
-                    <option value="JUVENIL">JUVENIL (11 a 17 anos)</option>
-                    <option value="ADULTO">ADULTO (18 a 65 anos)</option>
-                    <option value="TERCEIRA_IDADE">TERCEIRA IDADE (65+)</option>
-                  </select>
+                <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowClassModal(false);
+                      setEditingClass(null);
+                    }}
+                    className="px-4 py-2 text-xs font-semibold text-slate-600"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={teachers.length === 0}
+                    className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow disabled:opacity-50"
+                  >
+                    {editingClass ? 'Salvar Alterações' : 'Salvar Turma'}
+                  </button>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Dia da Semana</label>
-                  <select name="dia_semana" className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
-                    <option value="SEGUNDA">Segunda-feira</option>
-                    <option value="TERCA">Terça-feira</option>
-                    <option value="QUARTA">Quarta-feira</option>
-                    <option value="QUINTA">Quinta-feira</option>
-                    <option value="SEXTA">Sexta-feira</option>
-                    <option value="SABADO">Sábado</option>
-                  </select>
-                </div>
-              </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
 
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Turno</label>
-                  <select name="turno" className="w-full px-3 py-2 border rounded-lg text-sm bg-white outline-none focus:border-amber-500">
-                    <option value="MANHA">Manhã</option>
-                    <option value="TARDE">Tarde</option>
-                    <option value="NOITE">Noite</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Início (HH:MM)</label>
+      {/* MODAL: CRIAR / EDITAR SALA */}
+      {showRoomModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-bold text-slate-800 text-base">
+                {editingRoom ? `Editar ${editingRoom.nome}` : 'Nova Sala / Estúdio'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowRoomModal(false);
+                  setEditingRoom(null);
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form key={editingRoom ? `edit-room-${editingRoom.id}` : 'new-room'} onSubmit={handleSaveRoom} className="space-y-4 mt-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Nome da Sala</label>
+                <input
+                  name="nome"
+                  required
+                  defaultValue={editingRoom?.nome || ''}
+                  placeholder="Ex: Sala 1"
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Capacidade Máxima (alunos)</label>
+                <input
+                  name="capacidade"
+                  type="number"
+                  min="1"
+                  required
+                  defaultValue={editingRoom?.capacidade ?? 9}
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Descrição</label>
+                <input
+                  name="descricao"
+                  defaultValue={editingRoom?.descricao || ''}
+                  placeholder="Ex: Sala de desenho e pintura"
+                  className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                />
+              </div>
+              {editingRoom && (
+                <div className="flex items-center gap-2 pt-1">
                   <input
-                    name="horario_inicio"
-                    type="text"
-                    defaultValue="14:00"
-                    placeholder="14:00"
-                    required
-                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
+                    name="ativa"
+                    type="checkbox"
+                    id="room_active"
+                    defaultChecked={editingRoom.ativa}
+                    className="rounded text-amber-600"
                   />
+                  <label htmlFor="room_active" className="text-xs text-slate-700 font-medium">Sala Ativa</label>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Término (HH:MM)</label>
-                  <input
-                    name="horario_fim"
-                    type="text"
-                    defaultValue="16:00"
-                    placeholder="16:00"
-                    required
-                    className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
-                  />
-                </div>
-              </div>
-
-              <div className="p-2.5 bg-amber-50 rounded-lg text-xs text-amber-800 font-medium">
-                🔒 Teto máximo fixo em <strong>9 alunos</strong> conforme diretriz inegociável da escola.
-              </div>
-
+              )}
               <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button type="button" onClick={() => setShowClassModal(false)} className="px-4 py-2 text-xs font-semibold text-slate-600">Cancelar</button>
                 <button
-                  type="submit"
-                  disabled={teachers.length === 0}
-                  className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow disabled:opacity-50"
+                  type="button"
+                  onClick={() => {
+                    setShowRoomModal(false);
+                    setEditingRoom(null);
+                  }}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600"
                 >
-                  Salvar Turma
+                  Cancelar
+                </button>
+                <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-lg shadow">
+                  {editingRoom ? 'Salvar Alterações' : 'Cadastrar Sala'}
                 </button>
               </div>
             </form>

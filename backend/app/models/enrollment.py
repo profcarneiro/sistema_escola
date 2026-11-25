@@ -20,6 +20,7 @@ class Matricula(Base):
     id = Column(Integer, primary_key=True, index=True)
     aluno_id = Column(Integer, ForeignKey("alunos.id", ondelete="RESTRICT"), nullable=False, index=True)
     turma_id = Column(Integer, ForeignKey("class_groups.id", ondelete="RESTRICT"), nullable=False, index=True)
+    curso_id = Column(Integer, ForeignKey("courses.id", ondelete="RESTRICT"), nullable=True, index=True)
 
     status = Column(String(30), nullable=False, default=StatusMatricula.ATIVA.value, index=True)
 
@@ -55,6 +56,7 @@ class Matricula(Base):
 
     aluno = relationship("Aluno", back_populates="matriculas")
     turma = relationship("ClassGroup")
+    curso = relationship("Course")
 
     def __repr__(self) -> str:
         return f"<Matricula id={self.id} aluno_id={self.aluno_id} turma_id={self.turma_id} status='{self.status}'>"

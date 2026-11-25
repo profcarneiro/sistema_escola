@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.core.audit import registrar_auditoria
@@ -143,7 +144,12 @@ def delete_course(
     if not course:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Modalidade não encontrada.")
 
-    has_classes = db.query(ClassGroup).filter(ClassGroup.curso_id == course_id).count()
+    has_classes = db.query(ClassGroup).filter(
+        or_(
+            ClassGroup.curso_id == course_id,
+            ClassGroup.cursos.any(Course.id == course_id)
+        )
+    ).count()
     if has_classes > 0:
         course.ativo = False
         db.commit()

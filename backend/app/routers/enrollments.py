@@ -13,6 +13,7 @@ from app.models.financial import Invoice, StatusTitulo
 from app.models.waitlist import ListaEspera
 from app.models.student import Aluno
 from app.models.class_group import ClassGroup
+from app.models.course import Course
 from app.models.user import User, UserRole
 from app.schemas.enrollment import (
     MatriculaCreate, MatriculaUpdate, MatriculaResponse,
@@ -215,6 +216,10 @@ def formatar_matricula_response(matricula: Matricula, total_parcelas: int = 0) -
         resp.aluno_nome = matricula.aluno.nome
     if matricula.turma:
         resp.turma_nome = matricula.turma.nome
+    if matricula.curso:
+        resp.curso_nome = matricula.curso.nome
+    elif matricula.turma and matricula.turma.curso:
+        resp.curso_nome = matricula.turma.curso.nome
     if matricula.desconto_percentual and matricula.valor_mensalidade:
         resp.valor_com_desconto = round(
             matricula.valor_mensalidade * (1 - matricula.desconto_percentual / 100), 2
@@ -231,7 +236,11 @@ def list_enrollments(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    query = db.query(Matricula).options(joinedload(Matricula.aluno), joinedload(Matricula.turma))
+    query = db.query(Matricula).options(
+        joinedload(Matricula.aluno),
+        joinedload(Matricula.turma).joinedload(ClassGroup.curso),
+        joinedload(Matricula.curso),
+    )
     if aluno_id:
         query = query.filter(Matricula.aluno_id == aluno_id)
     if turma_id:
@@ -266,7 +275,7 @@ def create_enrollment(
 ):
     """
     Realiza a matrícula de um aluno. Regras aplicadas:
-    - Turma deve ter vagas (máx. 9 alunos ativos)
+    - Turma deve ter vagas conforme sua capacidade configurada
     - Aluno não pode estar já matriculado e ativo na mesma turma
     - Matrícula cria número de contrato único (renovação NÃO é automática)
     """
@@ -280,11 +289,26 @@ def create_enrollment(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno ativo não encontrado.")
 
     # 2. Valida existência e atividade da turma
-    turma = db.query(ClassGroup).filter(
+    turma = db.query(ClassGroup).options(joinedload(ClassGroup.cursos)).filter(
         ClassGroup.id == mat_in.turma_id, ClassGroup.ativa.is_(True)
     ).first()
     if not turma:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turma ativa não encontrada.")
+
+    curso_id_efetivo = mat_in.curso_id
+    if curso_id_efetivo is not None:
+        cursos_da_turma_ids = {c.id for c in (turma.cursos or [])}
+        if turma.curso_id is not None:
+            cursos_da_turma_ids.add(turma.curso_id)
+        if cursos_da_turma_ids and curso_id_efetivo not in cursos_da_turma_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="O curso selecionado não está associado à turma escolhida."
+            )
+    elif turma.cursos and len(turma.cursos) == 1:
+        curso_id_efetivo = turma.cursos[0].id
+    elif turma.curso_id is not None:
+        curso_id_efetivo = turma.curso_id
 
     # 3. Verifica se aluno já está matriculado na turma
     matricula_existente = db.query(Matricula).filter(
@@ -298,7 +322,7 @@ def create_enrollment(
             detail="Este aluno já possui matrícula ativa nesta turma."
         )
 
-    # 4. Verifica capacidade (regra estrita: máx. 9 alunos)
+    # 4. Verifica capacidade configurada da turma
     vagas_ocupadas = contar_matriculas_ativas(db, mat_in.turma_id)
     if vagas_ocupadas >= turma.capacidade_maxima:
         raise HTTPException(
@@ -321,6 +345,7 @@ def create_enrollment(
     nova_matricula = Matricula(
         aluno_id=mat_in.aluno_id,
         turma_id=mat_in.turma_id,
+        curso_id=curso_id_efetivo,
         status=status_inicial,
         data_matricula=mat_in.data_matricula,
         data_inicio=mat_in.data_inicio,
@@ -426,6 +451,19 @@ def update_enrollment(
         matricula.contrato_assinado = mat_update.contrato_assinado
         if mat_update.contrato_assinado:
             matricula.data_assinatura_contrato = datetime.now(timezone.utc)
+
+    if mat_update.curso_id is not None:
+        turma = matricula.turma
+        if turma:
+            cursos_ids = {c.id for c in (turma.cursos or [])}
+            if turma.curso_id is not None:
+                cursos_ids.add(turma.curso_id)
+            if cursos_ids and mat_update.curso_id not in cursos_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="O curso selecionado não está associado à turma da matrícula."
+                )
+        matricula.curso_id = mat_update.curso_id
 
     if mat_update.valor_mensalidade is not None:
         matricula.valor_mensalidade = mat_update.valor_mensalidade

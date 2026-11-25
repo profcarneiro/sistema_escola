@@ -8,7 +8,6 @@ from app.database import Base
 class Room(Base):
     __tablename__ = "rooms"
     __table_args__ = (
-        CheckConstraint("capacidade <= 9", name="check_capacidade_maxima_9"),
         CheckConstraint("capacidade >= 1", name="check_capacidade_minima_1"),
     )
 

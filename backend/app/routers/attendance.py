@@ -213,7 +213,7 @@ def create_makeup(
     if not turma_destino or not turma_destino.ativa:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turma de destino não encontrada ou inativa.")
 
-    # 4. Verifica capacidade máxima da turma de destino (teto de 9 alunos)
+    # 4. Verifica capacidade máxima da turma de destino
     from app.routers.enrollments import contar_matriculas_ativas
     matriculados_ativos = contar_matriculas_ativas(db, makeup_in.turma_destino_id)
     # Reposições ativas na mesma data e turma
@@ -228,7 +228,7 @@ def create_makeup(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"A turma de destino '{turma_destino.nome}' atingiu o limite de "
-                f"{turma_destino.capacidade_maxima} alunos para esta data (capacidade máxima 9)."
+                f"{turma_destino.capacidade_maxima} alunos para esta data."
             )
         )
 
@@ -410,6 +410,7 @@ def get_classes_attendance_summary(
 ):
     turmas = db.query(ClassGroup).options(
         joinedload(ClassGroup.curso),
+        joinedload(ClassGroup.cursos),
         joinedload(ClassGroup.professor)
     ).filter(ClassGroup.ativa.is_(True)).order_by(ClassGroup.nome.asc()).all()
 
@@ -446,10 +447,14 @@ def get_classes_attendance_summary(
             Matricula.status.in_([StatusMatricula.ATIVA.value, StatusMatricula.EXPERIMENTAL.value])
         ).count()
 
+        cursos_nomes = [c.nome for c in (turma.cursos or [])]
+        if not cursos_nomes and turma.curso:
+            cursos_nomes = [turma.curso.nome]
+
         res.append(ClassAttendanceSummary(
             turma_id=turma.id,
             turma_nome=turma.nome,
-            curso_nome=turma.curso.nome if turma.curso else "Sem curso",
+            curso_nome=", ".join(cursos_nomes) if cursos_nomes else "Sem curso",
             professor_nome=turma.professor.nome if turma.professor else "Sem professor",
             dia_semana=turma.dia_semana,
             horario=f"{turma.horario_inicio}-{turma.horario_fim}",

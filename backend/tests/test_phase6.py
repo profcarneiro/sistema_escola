@@ -149,7 +149,7 @@ def deve_obter_relatorio_de_ocupacao_de_salas(client, admin_token, ambiente_fase
     assert resp.status_code == 200
     salas = resp.json()
     assert len(salas) >= 1
-    assert all(s["capacidade_sala"] <= 9 for s in salas)  # Teto inegociável de 9
+    assert all(s["capacidade_sala"] >= 1 for s in salas)
 
 
 def deve_exportar_cadastro_de_alunos_em_csv(client, admin_token, ambiente_fase6):

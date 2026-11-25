@@ -1,9 +1,17 @@
 from datetime import datetime, timezone
 import enum
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Time, CheckConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Time, CheckConstraint, Table
 from sqlalchemy.orm import relationship
 
 from app.database import Base
+
+
+class_group_courses = Table(
+    "class_group_courses",
+    Base.metadata,
+    Column("turma_id", Integer, ForeignKey("class_groups.id", ondelete="CASCADE"), primary_key=True),
+    Column("curso_id", Integer, ForeignKey("courses.id", ondelete="RESTRICT"), primary_key=True),
+)
 
 
 class FaixaEtaria(str, enum.Enum):
@@ -32,17 +40,16 @@ class Turno(str, enum.Enum):
 class ClassGroup(Base):
     __tablename__ = "class_groups"
     __table_args__ = (
-        CheckConstraint("capacidade_maxima <= 9", name="check_turma_capacidade_maxima_9"),
         CheckConstraint("capacidade_maxima >= 1", name="check_turma_capacidade_minima_1"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     nome = Column(String(100), nullable=False, index=True)
-    curso_id = Column(Integer, ForeignKey("courses.id", ondelete="RESTRICT"), nullable=False)
+    curso_id = Column(Integer, ForeignKey("courses.id", ondelete="RESTRICT"), nullable=True)
     sala_id = Column(Integer, ForeignKey("rooms.id", ondelete="RESTRICT"), nullable=False)
     professor_id = Column(Integer, ForeignKey("teachers.id", ondelete="RESTRICT"), nullable=False)
     
-    faixa_etaria = Column(String(30), nullable=False, default=FaixaEtaria.ADULTO.value)
+    faixa_etaria = Column(String(30), nullable=True)
     dia_semana = Column(String(20), nullable=False)
     turno = Column(String(20), nullable=False)
     horario_inicio = Column(String(5), nullable=False)  # Formato "HH:MM", ex: "09:00"
@@ -52,7 +59,8 @@ class ClassGroup(Base):
     ativa = Column(Boolean, default=True, nullable=False)
     criada_em = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
-    curso = relationship("Course", back_populates="turmas")
+    curso = relationship("Course", back_populates="turmas", foreign_keys=[curso_id])
+    cursos = relationship("Course", secondary=class_group_courses, back_populates="turmas_mistas")
     sala = relationship("Room", back_populates="turmas")
     professor = relationship("Teacher", back_populates="turmas")
 

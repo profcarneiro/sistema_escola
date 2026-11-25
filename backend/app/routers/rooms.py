@@ -37,13 +37,7 @@ def create_room(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))
 ):
-    """Cadastra uma sala física respeitando o teto inegociável de 9 alunos."""
-    if room_in.capacidade > 9:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="A capacidade máxima da sala não pode ultrapassar 9 alunos (regra da Escola Helena Barufaldi)."
-        )
-
+    """Cadastra uma sala física com capacidade configurável."""
     nome_clean = room_in.nome.strip()
     existing = db.query(Room).filter(Room.nome.ilike(nome_clean)).first()
     if existing:
@@ -98,12 +92,6 @@ def update_room(
     room = db.query(Room).filter(Room.id == room_id).first()
     if not room:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sala não encontrada.")
-
-    if room_update.capacidade is not None and room_update.capacidade > 9:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="A capacidade máxima da sala não pode ultrapassar 9 alunos."
-        )
 
     if room_update.nome is not None:
         nome_clean = room_update.nome.strip()
