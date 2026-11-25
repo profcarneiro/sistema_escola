@@ -303,3 +303,34 @@ def deve_gerar_dre_operacional(client, admin_token, ambiente_fase5):
     assert "despesas_operacionais" in dre
     assert "resultado_liquido" in dre
     assert dre["resultado_liquido"] == round(dre["receita_liquida"] - dre["despesas_operacionais"], 2)
+
+
+def deve_garantir_dre_com_receita_liquida_menor_ou_igual_a_bruta_com_juros(
+    client, admin_token, ambiente_fase5, db_session
+):
+    vencida = date.today() - timedelta(days=10)
+    fatura = Invoice(
+        matricula_id=ambiente_fase5["matricula"].id,
+        aluno_id=ambiente_fase5["aluno"].id,
+        descricao="Mensalidade Vencida DRE",
+        competencia=vencida.strftime("%Y-%m"),
+        valor_nominal=290.0,
+        desconto_aplicado=0.0,
+        valor_final=290.0,
+        data_vencimento=vencida,
+        status=StatusTitulo.PENDENTE.value,
+    )
+    db_session.add(fatura)
+    db_session.commit()
+
+    # Atualiza juros/multa pela régua de inadimplência
+    client.get("/api/v1/financial/defaulters", headers={"Authorization": f"Bearer {admin_token}"})
+
+    resp = client.get(
+        f"/api/v1/financial/dre?competencia_inicio={vencida}&competencia_fim={vencida}",
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert resp.status_code == 200
+    dre = resp.json()
+    assert dre["receita_bruta"] >= dre["receita_liquida"]
+    assert dre["receita_liquida"] == round(dre["receita_bruta"] - dre["deducoes_descontos"], 2)

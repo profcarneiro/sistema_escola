@@ -118,6 +118,7 @@ export const api = {
   getRooms: () => request('/rooms/'),
   createRoom: (data) => request('/rooms/', { method: 'POST', body: JSON.stringify(data) }),
   updateRoom: (id, data) => request(`/rooms/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteRoom: (id) => request(`/rooms/${id}`, { method: 'DELETE' }),
   getCourses: () => request('/courses/'),
   createCourse: (data) => request('/courses/', { method: 'POST', body: JSON.stringify(data) }),
   updateCourse: (id, data) => request(`/courses/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -140,12 +141,14 @@ export const api = {
   getStudent: (id) => request(`/students/${id}`),
   createStudent: (data) => request('/students/', { method: 'POST', body: JSON.stringify(data) }),
   updateStudent: (id, data) => request(`/students/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteStudent: (id) => request(`/students/${id}`, { method: 'DELETE' }),
   updateGuardian: (alunoId, data) => request(`/students/${alunoId}/responsavel`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Matrículas & Espera
   getEnrollments: () => request('/enrollments/'),
   createEnrollment: (data) => request('/enrollments/', { method: 'POST', body: JSON.stringify(data) }),
   updateEnrollment: (id, data) => request(`/enrollments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteEnrollment: (id) => request(`/enrollments/${id}`, { method: 'DELETE' }),
   generateEnrollmentInvoices: (matriculaId) => request(`/enrollments/${matriculaId}/generate-invoices`, { method: 'POST' }),
   getWaitlist: (turmaId) => request(`/enrollments/waitlist/${turmaId}`),
 

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.audit import registrar_auditoria
 from app.database import get_db
 from app.models.room import Room
+from app.models.class_group import ClassGroup
 from app.models.user import User, UserRole
 from app.schemas.room import RoomCreate, RoomUpdate, RoomResponse
 from app.routers.auth import get_current_active_user, require_roles
@@ -125,3 +126,38 @@ def update_room(
         ip=client_ip
     )
     return room
+
+
+@router.delete("/{room_id}", status_code=status.HTTP_200_OK, summary="Excluir ou desativar sala")
+def delete_room(
+    room_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(UserRole.DIRECAO.value, UserRole.COORDENACAO.value))
+):
+    room = db.query(Room).filter(Room.id == room_id).first()
+    if not room:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sala não encontrada.")
+
+    has_classes = db.query(ClassGroup).filter(ClassGroup.sala_id == room_id).count()
+    if has_classes > 0:
+        room.ativa = False
+        db.commit()
+        db.refresh(room)
+        msg = f"Sala '{room.nome}' possui turmas vinculadas e foi desativada com sucesso."
+    else:
+        db.delete(room)
+        db.commit()
+        msg = f"Sala '{room.nome}' excluída com sucesso."
+
+    client_ip = request.client.host if request.client else None
+    registrar_auditoria(
+        db=db,
+        acao="SALA_EXCLUIDA",
+        entidade="Room",
+        registro_id=str(room_id),
+        detalhes={"acao": msg},
+        usuario=current_user,
+        ip=client_ip
+    )
+    return {"status": "ok", "mensagem": msg}

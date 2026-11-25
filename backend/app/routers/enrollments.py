@@ -504,6 +504,66 @@ def update_enrollment(
     return formatar_matricula_response(matricula, total_parcelas=total_parcelas)
 
 
+@router.delete(
+    "/{matricula_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Excluir matrícula (quando não houver faturas pagas)"
+)
+def delete_enrollment(
+    matricula_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(
+        UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value, UserRole.FINANCEIRO.value
+    ))
+):
+    """
+    Exclui uma matrícula que não possua mensalidades pagas, removendo parcelas em aberto/canceladas
+    e liberando a vaga na turma. Caso existam faturas pagas, preserva o histórico bloqueando a exclusão.
+    """
+    matricula = db.query(Matricula).options(
+        joinedload(Matricula.aluno),
+        joinedload(Matricula.turma)
+    ).filter(Matricula.id == matricula_id).first()
+    if not matricula:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Matrícula não encontrada.")
+
+    faturas_pagas = db.query(Invoice).filter(
+        Invoice.matricula_id == matricula_id,
+        Invoice.status == StatusTitulo.PAGO.value
+    ).count()
+    if faturas_pagas > 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Esta matrícula possui mensalidade(s) já paga(s) e não pode ser excluída. "
+                "Use a opção de editar matrícula para cancelar ou trancar preservando o histórico financeiro."
+            )
+        )
+
+    aluno_nome = matricula.aluno.nome if matricula.aluno else f"Aluno #{matricula.aluno_id}"
+    turma_nome = matricula.turma.nome if matricula.turma else f"Turma #{matricula.turma_id}"
+
+    db.query(Invoice).filter(Invoice.matricula_id == matricula_id).delete(synchronize_session=False)
+    db.delete(matricula)
+    db.commit()
+
+    client_ip = request.client.host if request.client else None
+    registrar_auditoria(
+        db=db,
+        acao="MATRICULA_EXCLUIDA",
+        entidade="Matricula",
+        registro_id=str(matricula_id),
+        detalhes={"aluno": aluno_nome, "turma": turma_nome},
+        usuario=current_user,
+        ip=client_ip
+    )
+    return {
+        "status": "ok",
+        "mensagem": f"Matrícula de '{aluno_nome}' na turma '{turma_nome}' excluída com sucesso."
+    }
+
+
 @router.post(
     "/{matricula_id}/generate-invoices",
     summary="Gerar parcelas faltantes de uma matrícula ativa"

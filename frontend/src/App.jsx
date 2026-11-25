@@ -93,9 +93,29 @@ export default function App() {
   const [studentAttendanceHistory, setStudentAttendanceHistory] = useState(null);
   const [loadingStudentHistory, setLoadingStudentHistory] = useState(false);
 
+  const toLocalISODate = (d = new Date()) => {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const isMinorBirthDate = (dateStr) => {
+    if (!dateStr) return false;
+    const parts = String(dateStr).split('T')[0].split('-');
+    if (parts.length !== 3) return false;
+    const [y, m, d] = parts.map(Number);
+    const hoje = new Date();
+    let idade = hoje.getFullYear() - y;
+    if (hoje.getMonth() + 1 < m || (hoje.getMonth() + 1 === m && hoje.getDate() < d)) {
+      idade -= 1;
+    }
+    return idade < 18;
+  };
+
   // Estados para Frequência / Diário
   const [selectedClassForAttendance, setSelectedClassForAttendance] = useState('');
-  const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [attendanceDate, setAttendanceDate] = useState(() => toLocalISODate());
   const [lessonTopic, setLessonTopic] = useState('');
   const [lessonContent, setLessonContent] = useState('');
   const [lessonMaterials, setLessonMaterials] = useState('');
@@ -191,8 +211,8 @@ export default function App() {
 
       // Carrega DRE do mês
       const hoje = new Date();
-      const primeiroDia = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().split('T')[0];
-      const ultimoDia = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0).toISOString().split('T')[0];
+      const primeiroDia = toLocalISODate(new Date(hoje.getFullYear(), hoje.getMonth(), 1));
+      const ultimoDia = toLocalISODate(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0));
       const dreData = await api.getDRE(primeiroDia, ultimoDia).catch(() => null);
       setDre(dreData);
     } catch (err) {
@@ -352,7 +372,7 @@ export default function App() {
     setModalError('');
     const formData = new FormData(e.target);
     const dataNascimento = formData.get('data_nascimento');
-    const isMenor = new Date().getFullYear() - new Date(dataNascimento).getFullYear() < 18;
+    const isMenor = isMinorBirthDate(dataNascimento);
 
     const payload = {
       nome: formData.get('nome'),
@@ -782,6 +802,43 @@ export default function App() {
       }
       setShowRoomModal(false);
       setEditingRoom(null);
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteRoom = async (room) => {
+    const confirmMsg = `Deseja realmente excluir ou desativar a sala '${room.nome}'?`;
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      const res = await api.deleteRoom(room.id);
+      showToast(res.mensagem || 'Sala processada com sucesso!');
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteStudent = async (student) => {
+    const confirmMsg = `Deseja realmente excluir ou desativar o(a) aluno(a) '${student.nome}'?`;
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      const res = await api.deleteStudent(student.id);
+      showToast(res.mensagem || 'Aluno processado com sucesso!');
+      loadDashboardData();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteEnrollment = async (enr) => {
+    const alunoNome = enr.aluno_nome || `Aluno #${enr.aluno_id}`;
+    const confirmMsg = `Deseja realmente excluir a matrícula de '${alunoNome}'? (Parcelas não pagas vinculadas serão removidas.)`;
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      const res = await api.deleteEnrollment(enr.id);
+      showToast(res.mensagem || 'Matrícula excluída com sucesso!');
       loadDashboardData();
     } catch (err) {
       showToast(err.message, 'error');
@@ -1352,7 +1409,7 @@ export default function App() {
                           <td className="px-6 py-4 font-medium text-slate-900">
                             <div>{st.nome}</div>
                             <span className="text-[11px] text-slate-400">
-                              Nasc: {new Date(st.data_nascimento).toLocaleDateString('pt-BR')}
+                              Nasc: {formatDateBR(st.data_nascimento)}
                             </span>
                             {st.alergias && <span className="block text-[11px] text-amber-700">Alergia: {st.alergias}</span>}
                           </td>
@@ -1403,6 +1460,15 @@ export default function App() {
                             >
                               <Edit className="w-4 h-4" />
                             </button>
+                            {!isProfessor && (
+                              <button
+                                onClick={() => handleDeleteStudent(st)}
+                                className="p-1.5 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition inline-flex items-center"
+                                title="Excluir ou desativar aluno"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               onClick={() => {
                                 setPreselectedStudentId(st.id);
@@ -1720,6 +1786,15 @@ export default function App() {
                           >
                             <Edit className="w-4 h-4" />
                           </button>
+                          {!isProfessor && (
+                            <button
+                              onClick={() => handleDeleteEnrollment(enr)}
+                              className="p-1.5 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition inline-flex items-center"
+                              title="Excluir matrícula"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                           <button
                             onClick={() => handleSendWelcomeWhatsApp(enr.id)}
                             className="px-3 py-1.5 text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition inline-flex items-center gap-1 shadow-sm"
@@ -1888,16 +1963,25 @@ export default function App() {
                               Capacidade: {room.capacidade} alunos
                             </span>
                             {isAdminOrCoord && (
-                              <button
-                                onClick={() => {
-                                  setEditingRoom(room);
-                                  setShowRoomModal(true);
-                                }}
-                                className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded transition"
-                                title="Editar sala e capacidade"
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setEditingRoom(room);
+                                    setShowRoomModal(true);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded transition"
+                                  title="Editar sala e capacidade"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteRoom(room)}
+                                  className="p-1 text-slate-400 hover:text-red-700 hover:bg-red-50 rounded transition"
+                                  title="Excluir ou desativar sala"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
                             )}
                           </div>
                         </div>
@@ -2493,7 +2577,7 @@ export default function App() {
                           <div key={l.id} className="p-3 rounded-lg border border-slate-100 bg-slate-50 flex justify-between items-center text-xs">
                             <div>
                               <strong className="text-slate-800 block text-sm">{l.tema_aula}</strong>
-                              <span className="text-slate-500">Data: {new Date(l.data_aula).toLocaleDateString('pt-BR')} • {l.materiais_utilizados || 'Sem materiais'}</span>
+                              <span className="text-slate-500">Data: {formatDateBR(l.data_aula)} • {l.materiais_utilizados || 'Sem materiais'}</span>
                             </div>
                             <span className="px-2 py-1 rounded bg-slate-200 text-slate-700 font-semibold">Registrada</span>
                           </div>
@@ -2654,7 +2738,7 @@ export default function App() {
                                   {records.map((rec, idx) => (
                                     <tr key={idx} className="hover:bg-slate-50">
                                       <td className="px-4 py-3 whitespace-nowrap font-medium text-slate-800">
-                                        {rec.data_aula ? new Date(rec.data_aula + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}
+                                        {rec.data_aula ? formatDateBR(rec.data_aula) : '—'}
                                       </td>
                                       <td className="px-4 py-3 whitespace-nowrap">{rec.turma_nome}</td>
                                       <td className="px-4 py-3 font-medium text-slate-700">{rec.tema_aula || '—'}</td>
@@ -3661,7 +3745,7 @@ export default function App() {
                   <input
                     name="data_matricula"
                     type="date"
-                    defaultValue={new Date().toISOString().split('T')[0]}
+                    defaultValue={toLocalISODate()}
                     required
                     className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
                   />
@@ -3671,7 +3755,7 @@ export default function App() {
                   <input
                     name="data_inicio"
                     type="date"
-                    defaultValue={new Date().toISOString().split('T')[0]}
+                    defaultValue={toLocalISODate()}
                     required
                     className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:border-amber-500"
                   />

@@ -166,3 +166,88 @@ def deve_atualizar_dados_e_saude_do_aluno(client, admin_token):
     assert resp.status_code == 200
     assert resp.json()["alergias"] == "Alergia a tinta acrílica"
     assert resp.json()["autorizacao_imagem"] is True
+
+
+def deve_preservar_data_nascimento_exata_e_excluir_ou_desativar_aluno(client, admin_token, db_session):
+    from datetime import date
+    from app.models.room import Room
+    from app.models.course import Course
+    from app.models.teacher import Teacher
+    from app.models.class_group import ClassGroup, FaixaEtaria, DiaSemana, Turno
+    from app.models.enrollment import Matricula, StatusMatricula
+
+    cria = client.post(
+        "/api/v1/students/",
+        json={
+            "nome": "Aluno Data Exata",
+            "data_nascimento": "2000-01-01",
+            "autorizacao_imagem": True,
+        },
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert cria.status_code == 201
+    assert cria.json()["data_nascimento"] == "2000-01-01"
+    aluno_livre_id = cria.json()["id"]
+
+    # Sem vínculos: deve excluir fisicamente
+    del_livre = client.delete(
+        f"/api/v1/students/{aluno_livre_id}",
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert del_livre.status_code == 200
+    assert "excluído" in del_livre.json()["mensagem"].lower()
+    assert client.get(
+        f"/api/v1/students/{aluno_livre_id}",
+        headers={"Authorization": f"Bearer {admin_token}"}
+    ).status_code == 404
+
+    # Aluno com matrícula vinculada: deve desativar preservando histórico
+    cria2 = client.post(
+        "/api/v1/students/",
+        json={"nome": "Aluno Vinculado Delete", "data_nascimento": "2001-03-10", "autorizacao_imagem": False},
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    aluno_vinc_id = cria2.json()["id"]
+
+    sala = Room(nome="Sala Del Aluno", capacidade=9, ativa=True)
+    curso = Course(nome="Curso Del Aluno", valor_mensalidade=250.0, ativo=True)
+    prof = Teacher(nome="Prof Del Aluno", email="prof.del.aluno@hbartes.com", ativo=True)
+    db_session.add_all([sala, curso, prof])
+    db_session.commit()
+
+    turma = ClassGroup(
+        nome="Turma Del Aluno",
+        curso_id=curso.id,
+        sala_id=sala.id,
+        professor_id=prof.id,
+        faixa_etaria=FaixaEtaria.ADULTO.value,
+        dia_semana=DiaSemana.SEGUNDA.value,
+        turno=Turno.MANHA.value,
+        horario_inicio="09:00",
+        horario_fim="11:00",
+        capacidade_maxima=9,
+        ativa=True,
+    )
+    db_session.add(turma)
+    db_session.commit()
+
+    mat = Matricula(
+        aluno_id=aluno_vinc_id,
+        turma_id=turma.id,
+        status=StatusMatricula.ATIVA.value,
+        data_matricula=date(2026, 11, 1),
+        data_inicio=date(2026, 11, 5),
+        valor_mensalidade=250.0,
+    )
+    db_session.add(mat)
+    db_session.commit()
+
+    del_vinc = client.delete(
+        f"/api/v1/students/{aluno_vinc_id}",
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert del_vinc.status_code == 200
+    assert "desativado" in del_vinc.json()["mensagem"].lower()
+    get_vinc = client.get(f"/api/v1/students/{aluno_vinc_id}", headers={"Authorization": f"Bearer {admin_token}"})
+    assert get_vinc.status_code == 200
+    assert get_vinc.json()["ativo"] is False

@@ -465,9 +465,9 @@ def get_dre(
         faturas_query = faturas_query.filter(Invoice.aluno_id == aluno_id)
     faturas = faturas_query.all()
 
-    receita_bruta = sum(f.valor_nominal for f in faturas)
-    deducoes_descontos = sum(f.desconto_aplicado for f in faturas)
-    receita_liquida = sum(f.valor_final for f in faturas)
+    receita_bruta = sum((f.valor_nominal or 0.0) + (f.juros_multa or 0.0) for f in faturas)
+    deducoes_descontos = sum(f.desconto_aplicado or 0.0 for f in faturas)
+    receita_liquida = round(receita_bruta - deducoes_descontos, 2)
 
     despesas = [] if aluno_id is not None else db.query(Expense).filter(
         Expense.data_competencia >= competencia_inicio,

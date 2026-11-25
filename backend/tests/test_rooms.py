@@ -98,3 +98,49 @@ def deve_obter_sala_por_id(client, admin_token, db_session):
 def deve_retornar_404_para_sala_inexistente(client, admin_token):
     resp = client.get("/api/v1/rooms/99999", headers={"Authorization": f"Bearer {admin_token}"})
     assert resp.status_code == 404
+
+
+def deve_excluir_sala_livre_e_desativar_sala_com_turma(client, admin_token, db_session):
+    from app.models.class_group import ClassGroup, FaixaEtaria, DiaSemana, Turno
+
+    cria = client.post(
+        "/api/v1/rooms/",
+        json={"nome": "Sala Temporária Del", "capacidade": 12},
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert cria.status_code == 201
+    sala_livre_id = cria.json()["id"]
+
+    del_livre = client.delete(f"/api/v1/rooms/{sala_livre_id}", headers={"Authorization": f"Bearer {admin_token}"})
+    assert del_livre.status_code == 200
+    assert "excluída" in del_livre.json()["mensagem"].lower()
+    assert client.get(f"/api/v1/rooms/{sala_livre_id}", headers={"Authorization": f"Bearer {admin_token}"}).status_code == 404
+
+    sala_vinc = Room(nome="Sala Com Turma Del", capacidade=10, ativa=True)
+    curso = Course(nome="Curso Sala Del", valor_mensalidade=250.0, ativo=True)
+    prof = Teacher(nome="Prof Sala Del", email="prof.sala.del@hbartes.com", ativo=True)
+    db_session.add_all([sala_vinc, curso, prof])
+    db_session.commit()
+
+    turma = ClassGroup(
+        nome="Turma Sala Del",
+        curso_id=curso.id,
+        sala_id=sala_vinc.id,
+        professor_id=prof.id,
+        faixa_etaria=FaixaEtaria.ADULTO.value,
+        dia_semana=DiaSemana.QUARTA.value,
+        turno=Turno.TARDE.value,
+        horario_inicio="14:00",
+        horario_fim="16:00",
+        capacidade_maxima=10,
+        ativa=True,
+    )
+    db_session.add(turma)
+    db_session.commit()
+
+    del_vinc = client.delete(f"/api/v1/rooms/{sala_vinc.id}", headers={"Authorization": f"Bearer {admin_token}"})
+    assert del_vinc.status_code == 200
+    assert "desativada" in del_vinc.json()["mensagem"].lower()
+    get_vinc = client.get(f"/api/v1/rooms/{sala_vinc.id}", headers={"Authorization": f"Bearer {admin_token}"})
+    assert get_vinc.status_code == 200
+    assert get_vinc.json()["ativa"] is False

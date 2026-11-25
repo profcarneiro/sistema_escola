@@ -7,6 +7,10 @@ from app.core.audit import registrar_auditoria
 from app.database import get_db
 from app.models.student import Aluno
 from app.models.guardian import Responsavel
+from app.models.enrollment import Matricula
+from app.models.financial import Invoice
+from app.models.attendance import Attendance, ClassMakeUp, Evaluation
+from app.models.waitlist import ListaEspera
 from app.models.user import User, UserRole
 from app.schemas.student import AlunoCreate, AlunoUpdate, AlunoResponse
 from app.schemas.guardian import ResponsavelCreate, ResponsavelUpdate, ResponsavelResponse
@@ -194,6 +198,56 @@ def update_student(
         ip=client_ip
     )
     return aluno
+
+
+@router.delete("/{aluno_id}", status_code=status.HTTP_200_OK, summary="Excluir ou desativar aluno")
+def delete_student(
+    aluno_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles(
+        UserRole.DIRECAO.value, UserRole.COORDENACAO.value, UserRole.SECRETARIA.value
+    ))
+):
+    aluno = db.query(Aluno).options(joinedload(Aluno.responsavel)).filter(Aluno.id == aluno_id).first()
+    if not aluno:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aluno não encontrado.")
+
+    has_links = (
+        db.query(Matricula).filter(Matricula.aluno_id == aluno_id).count()
+        + db.query(Invoice).filter(Invoice.aluno_id == aluno_id).count()
+        + db.query(Attendance).filter(Attendance.aluno_id == aluno_id).count()
+        + db.query(ClassMakeUp).filter(ClassMakeUp.aluno_id == aluno_id).count()
+        + db.query(Evaluation).filter(Evaluation.aluno_id == aluno_id).count()
+    )
+
+    if has_links > 0:
+        aluno.ativo = False
+        if aluno.responsavel:
+            aluno.responsavel.ativo = False
+        db.commit()
+        db.refresh(aluno)
+        msg = f"Aluno '{aluno.nome}' possui matrículas, faturas ou registros vinculados e foi desativado com sucesso."
+    else:
+        db.query(ListaEspera).filter(ListaEspera.aluno_id == aluno_id).delete(synchronize_session=False)
+        if aluno.responsavel:
+            db.delete(aluno.responsavel)
+            db.flush()
+        db.delete(aluno)
+        db.commit()
+        msg = f"Aluno '{aluno.nome}' excluído com sucesso."
+
+    client_ip = request.client.host if request.client else None
+    registrar_auditoria(
+        db=db,
+        acao="ALUNO_EXCLUIDO",
+        entidade="Aluno",
+        registro_id=str(aluno_id),
+        detalhes={"acao": msg},
+        usuario=current_user,
+        ip=client_ip
+    )
+    return {"status": "ok", "mensagem": msg}
 
 
 # ─── Endpoints de Responsável ──────────────────────────────────────────────────

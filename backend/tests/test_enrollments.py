@@ -291,3 +291,42 @@ def deve_matricular_acima_de_9_alunos_e_escolher_curso_em_turma_mista(client, ad
         )
         assert mat_resp.status_code == 201
         assert mat_resp.json()["curso_id"] == (curso2.id if i % 2 == 0 else curso1.id)
+
+
+def deve_excluir_matricula_sem_pagamento_e_bloquear_quando_houver_fatura_paga(
+    client, admin_token, turma_fase3, aluno_fase3, db_session
+):
+    from app.models.financial import Invoice, StatusTitulo
+
+    cria = client.post(
+        "/api/v1/enrollments/",
+        json={
+            "aluno_id": aluno_fase3.id,
+            "turma_id": turma_fase3.id,
+            "data_matricula": "2026-11-01",
+            "data_inicio": "2026-11-05",
+            "valor_mensalidade": 290.0,
+            "quantidade_parcelas": 2,
+        },
+        headers={"Authorization": f"Bearer {admin_token}"}
+    )
+    assert cria.status_code == 201
+    mat_id = cria.json()["id"]
+
+    # Marca uma fatura como PAGO e verifica bloqueio (409)
+    inv = db_session.query(Invoice).filter(Invoice.matricula_id == mat_id).first()
+    inv.status = StatusTitulo.PAGO.value
+    db_session.commit()
+
+    del_block = client.delete(f"/api/v1/enrollments/{mat_id}", headers={"Authorization": f"Bearer {admin_token}"})
+    assert del_block.status_code == 409
+
+    # Volta faturas para pendente e exclui com sucesso
+    for f in db_session.query(Invoice).filter(Invoice.matricula_id == mat_id).all():
+        f.status = StatusTitulo.PENDENTE.value
+    db_session.commit()
+
+    del_ok = client.delete(f"/api/v1/enrollments/{mat_id}", headers={"Authorization": f"Bearer {admin_token}"})
+    assert del_ok.status_code == 200
+    assert "excluída" in del_ok.json()["mensagem"].lower()
+    assert client.get(f"/api/v1/enrollments/{mat_id}", headers={"Authorization": f"Bearer {admin_token}"}).status_code == 404
